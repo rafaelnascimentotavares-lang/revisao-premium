@@ -1,0 +1,8 @@
+node_modules
+data
+*.zip
+test.js
+demo-servidor.cjs
+iniciar-demo.*
+LEIA-ME-DEMO.txt
+.env

@@ -1,0 +1,13 @@
+COMO ABRIR A DEMONSTRACAO
+
+1) Instale o Node.js 22.13 ou mais novo (versao LTS) em https://nodejs.org, se ainda nao tiver.
+2) Descompacte o arquivo .zip (botao direito > Extrair tudo).
+3) Dentro da pasta, de dois cliques em:
+     iniciar-demo.bat        (Windows)
+     iniciar-demo.command    (Mac)
+4) O navegador abre em http://localhost:3000. Senha de todos os usuarios: demo-12345
+   Usuarios: agendamento@demo.com, kinto.anapolis1@demo.com, kinto.anapolis2@demo.com,
+             kinto.goiania@demo.com, gestor@demo.com, admin@demo.com
+5) Para encerrar, feche a janela preta.
+
+Dica: abra cada usuario em uma janela anonima diferente (Ctrl+Shift+N), lado a lado.

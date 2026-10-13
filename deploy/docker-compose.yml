@@ -1,0 +1,16 @@
+# Servidor próprio (VPS): HTTPS automático com Caddy. Uso: copie .env.example para .env, ajuste e rode `docker compose up -d`.
+services:
+  app:
+    build: ..
+    restart: unless-stopped
+    env_file: .env
+    environment: { TRUST_PROXY: "1" }
+    volumes: [dados:/data]
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    environment: { DOMINIO: "${DOMINIO}" }
+    volumes: [./Caddyfile:/etc/caddy/Caddyfile:ro, caddy_dados:/data]
+    depends_on: [app]
+volumes: { dados: {}, caddy_dados: {} }

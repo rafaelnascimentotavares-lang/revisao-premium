@@ -1,0 +1,10 @@
+{
+  "name": "Revisão Premium | Registro",
+  "short_name": "Revisão Premium",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#F4F8FB",
+  "theme_color": "#14587A",
+  "lang": "pt-BR",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

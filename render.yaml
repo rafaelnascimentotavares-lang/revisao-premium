@@ -1,0 +1,26 @@
+# Publicação na Render (https://render.com): Blueprint -> New -> Blueprint, apontando para o repositório.
+# O disco persistente guarda o banco e os backups; exige plano pago (não use o plano gratuito: ele apaga os dados).
+services:
+  - type: web
+    name: revisao-premium
+    runtime: docker
+    plan: starter
+    healthCheckPath: /healthz
+    autoDeploy: true
+    disk:
+      name: dados
+      mountPath: /data
+      sizeGB: 1
+    envVars:
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PASSWORD
+        sync: false
+      - key: APP_URL
+        sync: false
+      - key: SMTP_URL
+        sync: false
+      - key: SMTP_FROM
+        sync: false
+      - key: ALERTA_EMAIL_PADRAO
+        sync: false

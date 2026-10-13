@@ -1,0 +1,19 @@
+{
+  "name": "revisao-premium-app",
+  "version": "1.0.0",
+  "description": "Registro e acompanhamento do piloto Revis\u00e3o Premium (Saga Toyota x KINTO Share)",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node test.js",
+    "backup": "node backup.js",
+    "demo": "node demo-servidor.cjs"
+  },
+  "engines": {
+    "node": ">=22.13"
+  },
+  "dependencies": {
+    "express": "^4.19.2",
+    "nodemailer": "^10.0.16"
+  }
+}
