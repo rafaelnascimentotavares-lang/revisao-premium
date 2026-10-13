@@ -65,6 +65,7 @@ Banco e backups ficam fora da pasta do programa em produção (`DATA_DIR`, padr�
 - **Ticket médio** = receita ÷ reservas concluídas · **Média de diárias** = diárias ÷ reservas concluídas.
 - **Tempo do aceite até a reserva** = do primeiro "Aceitou" até o primeiro registro da reserva (mediana e média), separado entre concluídas e não concluídas. Reservas criadas antes desta versão usam a data da última atualização.
 - **Comparativo**: cada indicador é comparado com o período imediatamente anterior de mesmo tamanho (ex.: 7 dias × 7 dias anteriores), com os mesmos filtros de loja e colaborador. Também está no CSV do painel.
+- **Resultado por etapa**: contatos dos casos do período, separados em Agendamento e Confirmação (contatos, não atendeu, ofertas, aceites, recusas, indecisos, não ofertado; taxa de aceite = aceites ÷ ofertas; taxa de atendimento). **Origem dos aceites** = em que etapa cada caso aceitou pela primeira vez e, se foi na Confirmação, o que ele era antes (recusou, indeciso, sem oferta). Cuidado ao comparar: a Confirmação tende a falar com quem já está engajado, então uma taxa maior lá não significa, sozinha, que a ligação funciona melhor.
 - Reservas e receita só contam o que o time KINTO (ou o gestor) registra na ficha. Aceitar na ligação não é locação.
 - A **loja do caso** é a loja da revisão escolhida no agendamento; a confirmação não a altera.
 - Para as taxas fazerem sentido, **todo agendamento deve entrar no app**, inclusive "Não atendeu" e "Não ofertado".

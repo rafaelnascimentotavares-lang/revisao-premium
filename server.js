@@ -288,7 +288,7 @@ function painel(q, { anterior = true } = {}) {
   if (colab) { where += ' AND c.usuario_id = ?'; params.push(colab); }
 
   const casos = db.prepare(`SELECT c.id, c.loja_id, c.data_local FROM casos c WHERE ${where}`).all(...params);
-  const contatos = db.prepare(`SELECT t.id, t.caso_id, t.resultado, t.criado_em, m.descricao AS motivo FROM contatos t
+  const contatos = db.prepare(`SELECT t.id, t.caso_id, t.etapa, t.resultado, t.criado_em, m.descricao AS motivo FROM contatos t
     JOIN motivos m ON m.id = t.motivo_id JOIN casos c ON c.id = t.caso_id WHERE t.ativo = 1 AND ${where} ORDER BY t.id`).all(...params);
   const reservas = db.prepare(`SELECT r.* FROM reservas r JOIN casos c ON c.id = r.caso_id WHERE ${where}`).all(...params);
 
@@ -400,6 +400,36 @@ function painel(q, { anterior = true } = {}) {
       .sort((a, b) => b.assumidos - a.assumidos),
   };
 
+  // resultado por etapa (contatos ativos dos casos do período) e origem dos aceites
+  const porEtapa = D.ETAPAS.map((et) => {
+    const x = { etapa: et, contatos: 0, ofertas: 0, aceites: 0, recusas: 0, indecisos: 0, nao_atendeu: 0, nao_ofertado: 0 };
+    for (const t of contatos) if (t.etapa === et) {
+      x.contatos++;
+      if (D.OFERTADOS.includes(t.resultado)) x.ofertas++;
+      if (t.resultado === 'Aceitou') x.aceites++;
+      if (t.resultado === 'Recusou') x.recusas++;
+      if (t.resultado === 'Ainda não decidiu') x.indecisos++;
+      if (t.resultado === 'Não atendeu') x.nao_atendeu++;
+      if (t.resultado === 'Não ofertado') x.nao_ofertado++;
+    }
+    x.taxa_aceite = pct(x.aceites, x.ofertas);
+    x.taxa_atendimento = pct(x.contatos - x.nao_atendeu, x.contatos);
+    return x;
+  });
+  const origem = { total: 0, agendamento: 0, confirmacao: 0, confirmacao_apos_recusa: 0, confirmacao_apos_indeciso: 0, confirmacao_sem_oferta_previa: 0 };
+  for (const lista of porCaso.values()) {
+    const i = lista.findIndex((t) => t.resultado === 'Aceitou');
+    if (i < 0) continue;
+    origem.total++;
+    if (lista[i].etapa === 'Agendamento') { origem.agendamento++; continue; }
+    origem.confirmacao++;
+    const antes = lista.slice(0, i).filter((t) => t.resultado !== 'Não atendeu');
+    const ult = antes.length ? antes[antes.length - 1].resultado : null;
+    if (ult === 'Recusou') origem.confirmacao_apos_recusa++;
+    else if (ult === 'Ainda não decidiu') origem.confirmacao_apos_indeciso++;
+    else origem.confirmacao_sem_oferta_previa++;
+  }
+
   // ticket médio e média de diárias (reservas concluídas)
   const ticketMedio = concl.length ? receita / concl.length : null;
   const mediaDiarias = concl.length ? diarias / concl.length : null;
@@ -432,6 +462,7 @@ function painel(q, { anterior = true } = {}) {
     por_colaborador: porColab,
     atendimento,
     tempo_reserva: tempoReserva,
+    por_etapa: porEtapa, origem_aceite: origem,
     anterior: anteriorPeriodo,
   };
 }
@@ -723,6 +754,11 @@ app.get('/api/export/painel.csv', auth, gestor, wrap((req, res) => {
     ['Ticket médio por reserva concluída (R$)', brNum(t.ticket_medio)], ['Média de diárias por reserva concluída', num(t.media_diarias == null ? null : Math.round(t.media_diarias * 10) / 10)]]);
   bloco('Taxas', ['Taxa', 'Valor'], [['Taxa de oferta (ofertados / agendamentos)', brPct(r.oferta)], ['Taxa de aceite (aceitaram / ofertados)', brPct(r.aceite)], ['Recuperação na confirmação', brPct(r.recuperacao)],
     ['Aceite para reserva', brPct(r.aceite_reserva)], ['Locações não concluídas (não concluídas / reservas registradas)', brPct(r.nao_conclusao)], ['Conversão total (reservas / agendamentos)', brPct(r.conversao_total)]]);
+  bloco('Resultado por etapa (contatos)', ['Etapa', 'Contatos', 'Não atendeu', 'Ofertas', 'Aceitaram', 'Recusaram', 'Ainda não decidiu', 'Não ofertado', 'Taxa de aceite (aceites / ofertas)', 'Taxa de atendimento'],
+    p.por_etapa.map((e) => [e.etapa, e.contatos, e.nao_atendeu, e.ofertas, e.aceites, e.recusas, e.indecisos, e.nao_ofertado, brPct(e.taxa_aceite), brPct(e.taxa_atendimento)]));
+  const og = p.origem_aceite;
+  bloco('Origem dos aceites (casos que aceitaram)', ['Origem', 'Casos'], [['Total de casos que aceitaram', og.total], ['Aceitaram já no Agendamento', og.agendamento], ['Aceitaram na Confirmação', og.confirmacao],
+    ['  da Confirmação: antes tinham recusado', og.confirmacao_apos_recusa], ['  da Confirmação: antes estavam indecisos', og.confirmacao_apos_indeciso], ['  da Confirmação: sem oferta anterior', og.confirmacao_sem_oferta_previa]]);
   const tr = p.tempo_reserva;
   bloco('Tempo do aceite até a reserva', ['Desfecho', 'Reservas', 'Mediana', 'Média'], [
     ['Concluídas', tr.concluidas.n, fmtMin(tr.concluidas.mediana_min), fmtMin(tr.concluidas.media_min)],

@@ -439,6 +439,23 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
     assert.ok(rel.includes('Ticket médio por reserva concluída (R$);') && rel.includes('Tempo do aceite até a reserva\r\nDesfecho;') && rel.includes('Comparativo com o período anterior'));
   });
+  await t('painel: resultado por etapa e origem dos aceites', async () => {
+    const p = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data;
+    assert.deepStrictEqual(p.por_etapa.map((e) => e.etapa), ['Agendamento', 'Confirmação']);
+    const soma = (k) => p.por_etapa.reduce((s, e) => s + e[k], 0);
+    const todos = (await call(adm, 'GET', `/api/export/contatos.csv?de=${rev}&ate=${rev}`)).data.split('\r\n').filter(Boolean).length - 1;
+    assert.ok(soma('contatos') > 0 && soma('contatos') <= todos + 5, 'contatos somados');
+    for (const e of p.por_etapa) {
+      assert.strictEqual(e.contatos, e.ofertas + e.nao_atendeu + e.nao_ofertado, 'ofertas + não atendeu + não ofertado = contatos');
+      if (e.ofertas) assert.ok(Math.abs(e.taxa_aceite - e.aceites / e.ofertas) < 1e-9);
+    }
+    const og = p.origem_aceite;
+    assert.strictEqual(og.total, p.totais.aceitaram, 'casos que aceitaram = aceitaram');
+    assert.strictEqual(og.agendamento + og.confirmacao, og.total);
+    assert.strictEqual(og.confirmacao_apos_recusa + og.confirmacao_apos_indeciso + og.confirmacao_sem_oferta_previa, og.confirmacao);
+    const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
+    assert.ok(rel.includes('Resultado por etapa (contatos)') && rel.includes('Origem dos aceites'));
+  });
   await t('backup: manual, listagem, download e permissão', async () => {
     assert.strictEqual((await call(colab, 'POST', '/api/admin/backups')).status, 403);
     assert.strictEqual((await call(gest, 'GET', '/api/admin/banco')).status, 403);
