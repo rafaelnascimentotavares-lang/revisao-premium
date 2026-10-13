@@ -490,6 +490,25 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const { db, SCHEMA_VERSAO } = require('./db');
     assert.strictEqual(db.prepare("SELECT valor FROM meta WHERE chave='schema_versao'").get().valor, String(SCHEMA_VERSAO));
   });
+  await t('atualização preserva dados: recupera de backup se o banco sumir e faz backup ao detectar código novo', async () => {
+    const { execFileSync } = require('child_process'); const fs = require('fs'); const path = require('path'); const os = require('os');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'rp-upd-'));
+    const env = { ...process.env, DATA_DIR: dir, DB_PATH: '', BACKUP_DIR: '', ADMIN_PASSWORD: 'x-senha-1234', NODE_ENV: 'test' };
+    delete env.DB_PATH; delete env.BACKUP_DIR;
+    const run = (code) => JSON.parse(execFileSync(process.execPath, ['--no-warnings', '-e', `const app=require('./server');const {db}=require('./db');const bk=require('./backup');${code}`], { cwd: __dirname, env }).toString().trim().split('\n').pop());
+    // 1ª execução: cria banco, grava um caso e um backup
+    run("app.protegerDados(()=>{});db.prepare(\"INSERT INTO casos (telefone,cliente_nome,data_revisao,criado_em,data_local) VALUES ('62999990000','Preservado','2030-01-01','2030-01-01 10:00:00','2030-01-01')\").run();bk.criarBackup(db.d,bk.pastaBackups(require('./db').DB_PATH),'auto','2030-01-01 03:00:00');console.log(JSON.stringify(1))");
+    // 2ª execução com o mesmo código: sem backup de atualização
+    let r = run("console.log(JSON.stringify(app.protegerDados(()=>{})))");
+    assert.strictEqual(r.backup_atualizacao, null);
+    // código mudou: backup antes de atualizar
+    r = run("db.prepare(\"UPDATE meta SET valor='antigo' WHERE chave='codigo'\").run();console.log(JSON.stringify(app.protegerDados(()=>{})))");
+    assert.ok(/atualizacao\.db$/.test(r.backup_atualizacao), 'backup de atualização criado');
+    // banco apagado (ex.: pasta recriada no deploy): recupera do backup mais recente
+    for (const f of fs.readdirSync(dir)) if (f.startsWith('app.db')) fs.unlinkSync(path.join(dir, f));
+    r = run("const x=app.protegerDados(()=>{});x.n=db.prepare(\"SELECT COUNT(*) n FROM casos WHERE cliente_nome='Preservado'\").get().n;console.log(JSON.stringify(x))");
+    assert.ok(r.recuperado, 'recuperou do backup'); assert.strictEqual(r.n, 1, 'caso preservado');
+  });
   await t('limite de tentativas de login', async () => {
     let last;
     for (let i = 0; i < 9; i++) last = await call({ cookie: '' }, 'POST', '/api/login', { email: 'alvo@saga.com', senha: 'x' });

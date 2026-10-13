@@ -5,8 +5,35 @@ const crypto = require('crypto');
 const fs = require('fs');
 const path = require('path');
 
-const DB_PATH = process.env.DB_PATH || path.join(__dirname, 'data', 'app.db');
-if (DB_PATH !== ':memory:') fs.mkdirSync(path.dirname(DB_PATH), { recursive: true });
+// Onde fica o banco. Em produção o padrão é FORA da pasta do programa, para que atualizações/redeploys
+// (que recriam a pasta do programa) nunca apaguem os dados. Prioridade: DB_PATH > DATA_DIR > padrão.
+const os = require('os');
+const PASTA_LEGADA = path.join(__dirname, 'data');
+function resolveDbPath() {
+  if (process.env.DB_PATH) return process.env.DB_PATH;
+  if (process.env.DATA_DIR) return path.join(process.env.DATA_DIR, 'app.db');
+  if (process.env.NODE_ENV === 'production') return path.join(os.homedir(), 'revisao-premium-dados', 'app.db');
+  return path.join(PASTA_LEGADA, 'app.db');
+}
+let DB_PATH = resolveDbPath();
+let AVISO_PASTA = null;
+if (DB_PATH !== ':memory:') {
+  try { fs.mkdirSync(path.dirname(DB_PATH), { recursive: true }); fs.accessSync(path.dirname(DB_PATH), fs.constants.W_OK); } catch (e) {
+    if (process.env.DB_PATH || process.env.DATA_DIR) throw new Error('Pasta do banco sem permissão de escrita: ' + path.dirname(DB_PATH));
+    AVISO_PASTA = 'Sem permissão em ' + path.dirname(DB_PATH) + '; usando ' + PASTA_LEGADA + ' (os dados podem se perder numa atualização!). Defina DATA_DIR.';
+    DB_PATH = path.join(PASTA_LEGADA, 'app.db'); fs.mkdirSync(PASTA_LEGADA, { recursive: true });
+  }
+}
+// Migração única: banco antigo dentro da pasta do programa -> nova pasta de dados (cópia consistente).
+let BANCO_MIGRADO_DE = null;
+if (DB_PATH !== ':memory:' && !fs.existsSync(DB_PATH)) {
+  const antigo = path.join(PASTA_LEGADA, 'app.db');
+  if (path.resolve(antigo) !== path.resolve(DB_PATH) && fs.existsSync(antigo)) {
+    const t = new DatabaseSync(antigo);
+    try { t.exec(`VACUUM INTO '${DB_PATH.replace(/'/g, "''")}'`); BANCO_MIGRADO_DE = antigo; } finally { t.close(); }
+  }
+}
+const BANCO_NOVO = DB_PATH === ':memory:' || !fs.existsSync(DB_PATH); // criado vazio nesta execução
 
 class Banco {
   constructor(arquivo) { this.d = new DatabaseSync(arquivo); }
@@ -186,6 +213,6 @@ function semear() {
 semear();
 
 module.exports = {
-  db, DB_PATH, SCHEMA_VERSAO, TABELAS, migrar, auditar, nowBR, hoje, addDays, isDate, hashSenha, confereSenha,
+  db, DB_PATH, BANCO_NOVO, BANCO_MIGRADO_DE, AVISO_PASTA, SCHEMA_VERSAO, TABELAS, migrar, auditar, nowBR, hoje, addDays, isDate, hashSenha, confereSenha,
   ETAPAS, RESULTADOS, OFERTADOS, PERFIS, STATUS_RESERVA, MOTIVOS_NAO_CONCLUSAO, VALOR_DIARIA_PADRAO,
 };

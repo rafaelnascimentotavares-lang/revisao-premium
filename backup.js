@@ -6,10 +6,10 @@ const path = require('path');
 const fs = require('fs');
 const { DatabaseSync } = require('node:sqlite');
 
-const TIPOS = { auto: 'automático', manual: 'manual', 'pre-restauracao': 'antes de restaurar' };
-const RETENCAO = { auto: Number(process.env.BACKUP_KEEP || 14), manual: 30, 'pre-restauracao': 5 };
+const TIPOS = { auto: 'automático', manual: 'manual', 'pre-restauracao': 'antes de restaurar', atualizacao: 'antes de atualização' };
+const RETENCAO = { auto: Number(process.env.BACKUP_KEEP || 14), manual: 30, 'pre-restauracao': 5, atualizacao: 10 };
 const HORA = process.env.BACKUP_HORA || '02:00';
-const NOME_OK = /^app-(\d{8})-(\d{6})-(auto|manual|pre-restauracao)\.db$/;
+const NOME_OK = /^app-(\d{8})-(\d{6})-(auto|manual|pre-restauracao|atualizacao)\.db$/;
 
 function pastaBackups(dbPath) {
   if (process.env.BACKUP_DIR) return process.env.BACKUP_DIR;
@@ -141,8 +141,8 @@ module.exports = { TIPOS, HORA, RETENCAO, pastaBackups, criarBackup, listar, apl
 
 // ---------- CLI ----------
 if (require.main === module) {
-  const origem = process.env.DB_PATH || path.join(__dirname, 'data', 'app.db');
-  if (!fs.existsSync(origem)) { console.error('Banco não encontrado:', origem); process.exit(1); }
+  const origem = require('./db').DB_PATH;
+  if (origem !== ':memory:' && !fs.existsSync(origem)) { console.error('Banco não encontrado:', origem); process.exit(1); }
   const pasta = pastaBackups(origem);
   try {
     const conn = new DatabaseSync(origem);

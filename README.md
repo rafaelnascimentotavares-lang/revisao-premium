@@ -43,6 +43,9 @@ Veja o **GUIA-PUBLICACAO.md** (Render ou servidor próprio com Docker + HTTPS). 
 - **Casos:** Exportar casos (CSV), respeitando busca, situação e loja da tela, sem o limite de 300 linhas da lista.
 - Os CSV abrem direto no Excel (UTF-8 com BOM, separador `;`, números no padrão pt-BR).
 
+## Atualizações preservam os dados
+Banco e backups ficam fora da pasta do programa em produção (`DATA_DIR`, padrão `~/revisao-premium-dados`). Ao detectar código novo o sistema faz um backup "antes de atualização"; se o banco sumir, restaura o backup mais recente. Detalhes no GUIA-PUBLICACAO.md.
+
 ## Dados e backup (Gestor KINTO → Administração → "Dados e backup")
 - **Backup automático diário**: o servidor cria 1 cópia por dia, depois das 02:00 (`BACKUP_HORA`). Se estava desligado nesse horário, faz assim que ligar. Mantém os 14 mais recentes (`BACKUP_KEEP`). Pasta: `data/backups/` (`BACKUP_DIR`).
 - **Fazer backup agora**: cópia manual na hora. **Baixar / Excluir** cada backup na lista.

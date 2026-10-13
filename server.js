@@ -5,7 +5,7 @@ const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const D = require('./db');
-const { db, DB_PATH, SCHEMA_VERSAO, migrar, auditar, nowBR, hoje, addDays, isDate, hashSenha, confereSenha } = D;
+const { db, DB_PATH, BANCO_NOVO, BANCO_MIGRADO_DE, AVISO_PASTA, SCHEMA_VERSAO, migrar, auditar, nowBR, hoje, addDays, isDate, hashSenha, confereSenha } = D;
 const alertas = require('./alertas');
 
 const PROD = process.env.NODE_ENV === 'production';
@@ -904,9 +904,44 @@ app.use((err, req, res, next) => { // eslint-disable-line no-unused-vars
   res.status(500).json({ erro: 'Erro interno' });
 });
 
+
+// ---------- proteção dos dados em atualizações ----------
+// 1) Banco recém-criado + há backups na pasta de backups => recupera o mais recente (ex.: pasta do banco foi apagada).
+// 2) Código mudou desde a última execução (atualização/redeploy) => backup "antes de atualização" ANTES de usar o banco.
+function assinaturaCodigo() {
+  const h = crypto.createHash('sha256');
+  for (const f of ['server.js', 'db.js', 'alertas.js', 'backup.js', 'public/app.js', 'public/style.css']) { try { h.update(fs.readFileSync(path.join(__dirname, f))); } catch { /* ausente */ } }
+  return h.digest('hex').slice(0, 12);
+}
+function protegerDados(log = console.log) {
+  const r = { recuperado: null, backup_atualizacao: null };
+  if (AVISO_PASTA) log('ATENÇÃO: ' + AVISO_PASTA);
+  if (BANCO_MIGRADO_DE) log('Banco antigo copiado para a nova pasta de dados: ' + DB_PATH);
+  if (DB_PATH === ':memory:') return r;
+  if (BANCO_NOVO) {
+    const ultimo = bk.listar(PASTA_BK)[0];
+    if (ultimo) {
+      try {
+        const c = path.join(PASTA_BK, ultimo.nome);
+        bk.validarArquivo(c, SCHEMA_VERSAO);
+        bk.restaurar(db.d, c); migrar();
+        r.recuperado = ultimo.nome; log('Banco novo detectado: dados recuperados do backup ' + ultimo.nome);
+      } catch (e) { log('Não foi possível recuperar do backup ' + ultimo.nome + ': ' + e.message); }
+    }
+  }
+  const atual = assinaturaCodigo();
+  const reg = db.prepare("SELECT valor FROM meta WHERE chave = 'codigo'").get();
+  if (reg && reg.valor !== atual && db.prepare('SELECT COUNT(*) n FROM casos').get().n > 0) {
+    try { r.backup_atualizacao = bk.criarBackup(db.d, PASTA_BK, 'atualizacao', nowBR()).nome; bk.aplicarRetencao(PASTA_BK); log('Atualização detectada: backup ' + r.backup_atualizacao); } catch (e) { log('Falha no backup de atualização: ' + e.message); }
+  }
+  db.prepare("INSERT INTO meta (chave, valor) VALUES ('codigo', ?) ON CONFLICT(chave) DO UPDATE SET valor = excluded.valor").run(atual);
+  return r;
+}
+app.protegerDados = protegerDados; // exposto para os testes
 app.escalar = alertas.escalar; // exposto para os testes
 module.exports = app;
 if (require.main === module) {
+  protegerDados();
   const porta = Number(process.env.PORT || 3000);
   const srv = app.listen(porta, '0.0.0.0', () => console.log(`Revisão Premium rodando na porta ${porta}${PROD ? ' (produção)' : ''}`));
   srv.requestTimeout = 5 * 60 * 1000; // importação de banco grande

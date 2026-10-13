@@ -28,6 +28,15 @@ O sistema é um único servidor Node.js com banco SQLite em arquivo. Para public
 5. Faça um teste completo com 2 usuários: registrar um aceite, ver o aviso na fila da loja certa, assumir e registrar a reserva.
 6. Teste no celular: o sistema funciona no navegador (Chrome/Safari); notificações do navegador exigem HTTPS, que a publicação já entrega.
 
+## Atualizações nunca apagam os dados
+Os dados (banco e backups) ficam **fora da pasta do programa**. Em produção o padrão é `~/revisao-premium-dados/` (pasta pessoal do usuário no servidor); no Docker/Render, o disco `/data`. Pode escolher outra pasta com `DATA_DIR`.
+- **Redeploy/atualização:** a pasta do programa pode ser apagada e recriada à vontade; o banco continua no mesmo lugar e as colunas novas são adicionadas sozinhas, sem apagar nada.
+- **Backup automático antes de atualizar:** quando o sistema detecta que o código mudou, cria um backup "antes de atualização" ANTES de usar o banco (aparece em Administração → Dados e backup).
+- **Banco antigo dentro da pasta do programa** (versões anteriores): é copiado automaticamente para a pasta de dados na primeira subida.
+- **Recuperação automática:** se o banco sumir mas a pasta de backups existir, o sistema restaura o backup mais recente ao iniciar.
+- **Na Hostinger:** não defina `DB_PATH` apontando para dentro do projeto. Deixe o padrão ou use `DATA_DIR=/home/SEU-USUARIO/revisao-premium-dados`. Se o log mostrar "ATENÇÃO: Sem permissão em ...", defina `DATA_DIR` para uma pasta onde o usuário possa gravar.
+- Nunca use "limpar/zerar" a pasta de dados no painel da hospedagem.
+
 ## Segurança já incluída
 HTTPS obrigatório (HSTS), cookie de sessão HttpOnly/Secure/SameSite, bloqueio de tentativas de login por IP e por e-mail, verificação de origem em ações de escrita, cabeçalhos de segurança (CSP restrita), senhas com scrypt, isolamento por loja no servidor, auditoria, página fora dos buscadores (noindex), desligamento limpo e verificação de saúde (`/healthz`).
 
