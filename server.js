@@ -341,7 +341,7 @@ function painel(q) {
 
   const taxas = (a) => ({
     oferta: pct(a.ofertados, a.agendamentos), aceite: pct(a.aceitaram, a.ofertados), recuperacao: pct(a.recuperados, a.indecisos),
-    aceite_reserva: pct(a.concluidas_aceitos, a.aceitaram), conversao_total: pct(a.concluidas, a.agendamentos),
+    aceite_reserva: pct(a.concluidas_aceitos, a.aceitaram), nao_conclusao: pct(a.nao_concluidas, a.concluidas + a.nao_concluidas), conversao_total: pct(a.concluidas, a.agendamentos),
   });
 
   const conta = (resultado) => {
@@ -696,13 +696,13 @@ app.get('/api/export/painel.csv', auth, gestor, wrap((req, res) => {
     ['Ainda não decidiram', t.indecisos], ['Indecisos que aceitaram depois', t.recuperados], ['Reservas concluídas', t.concluidas], ['Reservas não concluídas', t.nao_concluidas],
     ['Aceitaram sem reserva', t.aceitos_sem_reserva], ['Diárias', t.diarias], ['Receita (R$)', brNum(t.receita)]]);
   bloco('Taxas', ['Taxa', 'Valor'], [['Taxa de oferta (ofertados / agendamentos)', brPct(r.oferta)], ['Taxa de aceite (aceitaram / ofertados)', brPct(r.aceite)], ['Recuperação na confirmação', brPct(r.recuperacao)],
-    ['Aceite para reserva', brPct(r.aceite_reserva)], ['Conversão total (reservas / agendamentos)', brPct(r.conversao_total)]]);
+    ['Aceite para reserva', brPct(r.aceite_reserva)], ['Locações não concluídas (não concluídas / reservas registradas)', brPct(r.nao_conclusao)], ['Conversão total (reservas / agendamentos)', brPct(r.conversao_total)]]);
   bloco('Por dia', ['Data', 'Agendamentos', 'Ofertados', 'Aceitaram', 'Reservas concluídas'], p.serie.map((d) => [brData(d.data), d.agendamentos, d.ofertados, d.aceitaram, d.concluidas]));
   for (const [titulo, lista] of [['Motivos de recusa', p.motivos.recusa], ['Motivos de aceite', p.motivos.aceite], ['Motivos de indecisão', p.motivos.indeciso], ['Motivos de não atendeu', p.motivos.nao_atendeu], ['Motivos de não ofertado', p.motivos.nao_ofertado], ['Motivos de locação não concluída', p.motivos.nao_concluida]]) {
     const tot = lista.reduce((s, x) => s + x.n, 0);
     bloco(titulo, ['Motivo', 'Quantidade', '% do total'], lista.map((x) => [x.motivo, x.n, brPct(x.n / tot)]));
   }
-  bloco('Por loja', ['Loja', 'Agendamentos', 'Ofertados', 'Aceitaram', 'Reservas concluídas', 'Taxa de aceite', 'Conversão total'], p.por_loja.map((l) => [l.loja, l.agendamentos, l.ofertados, l.aceitaram, l.concluidas, brPct(l.aceite), brPct(l.conversao_total)]));
+  bloco('Por loja', ['Loja', 'Agendamentos', 'Ofertados', 'Aceitaram', 'Reservas concluídas', 'Reservas não concluídas', 'Aceitaram sem reserva', 'Taxa de aceite', '% não concluídas', 'Conversão total'], p.por_loja.map((l) => [l.loja, l.agendamentos, l.ofertados, l.aceitaram, l.concluidas, l.nao_concluidas, l.aceitos_sem_reserva, brPct(l.aceite), brPct(l.nao_conclusao), brPct(l.conversao_total)]));
   bloco('Por colaborador (contatos no período)', ['Colaborador', 'Contatos', 'Ofertas', 'Aceites', 'Recusas', 'Não atendeu', 'Taxa de aceite'], p.por_colaborador.map((c) => [c.nome, c.contatos, c.ofertas, c.aceites, c.recusas, c.nao_atendeu, brPct(c.taxa_aceite)]));
   bloco('Atendimento KINTO', ['Indicador', 'Valor'], [['Aguardando atendimento', at.aguardando], ['Maior espera agora (min)', num(at.maior_espera_min)], ['Mediana até assumir (min)', num(at.mediana_assumir_min)]]);
   bloco('Atendimento por consultor', ['Consultor', 'Assumidos', 'Concluídas', 'Não concluídas', 'Mediana até assumir (min)'], at.por_atendente.map((a) => [a.nome, a.assumidos, a.concluidas, a.nao_concluidas, num(a.mediana_assumir_min)]));

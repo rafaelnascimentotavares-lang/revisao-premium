@@ -75,7 +75,7 @@ select:disabled, input:disabled { background: #f0f4f7; color: #8794a0; }
 .chips { display: flex; gap: 6px; flex-wrap: wrap; }
 .chip { border: 1px solid var(--line); background: #fff; border-radius: 999px; padding: 7px 14px; cursor: pointer; font-weight: 600; color: var(--dark); min-height: 38px; }
 .chip.on { background: var(--teal); color: #fff; border-color: var(--teal); }
-.kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); margin-bottom: 14px; }
+.kpis { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); margin-bottom: 14px; }
 .kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
 .kpi .v { font-size: 30px; font-weight: 700; color: var(--dark); line-height: 1.1; }
 .kpi .l { font-size: 13px; color: var(--muted); font-weight: 600; }

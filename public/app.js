@@ -283,7 +283,7 @@ async function carregaPainel() {
   catch (e) { if (S.me) box.innerHTML = `<div class="alert">${esc(e.message)}</div>`; return; }
   const t = p.totais, r = p.taxas;
   const kpi = (l, v, s) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s || '&nbsp;'}</div></div>`;
-  const etapas = [['Agendamentos', t.agendamentos, ''], ['Contatados', t.contatados, ''], ['Ofertados', t.ofertados, ''], ['Aceitaram', t.aceitaram, 'ok'], ['Reserva concluída', t.concluidas, 'ok']];
+  const etapas = [['Agendamentos', t.agendamentos, ''], ['Contatados', t.contatados, ''], ['Ofertados', t.ofertados, ''], ['Aceitaram', t.aceitaram, 'ok'], ['Reserva concluída', t.concluidas, 'ok'], ['Reserva não concluída', t.nao_concluidas, 'bad'], ['Aceitou, sem reserva ainda', t.aceitos_sem_reserva, 'warn']];
   const base = t.agendamentos || 1;
   // série diária (agrupa por semana quando passa de 31 dias)
   let serie = p.serie;
@@ -295,7 +295,7 @@ async function carregaPainel() {
   box.innerHTML = `
     ${t.aceitos_sem_reserva ? `<div class="alert"><b>${t.aceitos_sem_reserva}</b> ${t.aceitos_sem_reserva === 1 ? 'cliente aceitou' : 'clientes aceitaram'} e ainda não ${t.aceitos_sem_reserva === 1 ? 'tem' : 'têm'} reserva registrada. <a href="#/casos" id="goac">Ver casos</a></div>` : ''}
     <div class="kpis">${kpi('Agendamentos', t.agendamentos)}${kpi('Ofertados', t.ofertados, pct(r.oferta) + ' dos agendamentos')}${kpi('Aceitaram', t.aceitaram, pct(r.aceite) + ' dos ofertados')}
-      ${kpi('Reservas concluídas', t.concluidas, pct(r.conversao_total) + ' dos agendamentos')}${kpi('Diárias', t.diarias)}${kpi('Receita', brl(t.receita))}</div>
+      ${kpi('Reservas concluídas', t.concluidas, pct(r.conversao_total) + ' dos agendamentos')}${kpi('Não concluídas', t.nao_concluidas, r.nao_conclusao == null ? 'sem reservas registradas' : pct(r.nao_conclusao) + ' das reservas registradas')}${kpi('Diárias', t.diarias)}${kpi('Receita', brl(t.receita))}</div>
     <div class="grid g2">
       <div class="card funnel"><h2>Funil</h2><div class="bars">${etapas.map(([n, v, c]) => `<div class="bar-row"><div class="name">${n}</div><div class="track"><div class="bar ${c}" data-w="${(v / base) * 100}"></div></div><div class="n">${v} · ${Math.round((v / base) * 100)}%</div></div>`).join('')}</div>
         <div class="rates"><div class="rate"><b>${pct(r.oferta)}</b><span>Taxa de oferta</span></div><div class="rate"><b>${pct(r.aceite)}</b><span>Taxa de aceite</span></div>
@@ -310,8 +310,8 @@ async function carregaPainel() {
       <div class="card"><h2>Ainda não decidiu</h2>${barras(p.motivos.indeciso, 'warn')}</div>
       <div class="card"><h2>Locação não concluída</h2>${barras(p.motivos.nao_concluida, 'bad')}</div></div>
     <div class="grid mt">
-      <div class="card"><h2>Por loja</h2><div class="tbl-wrap"><table><thead><tr><th>Loja</th><th class="num">Agend.</th><th class="num">Ofertados</th><th class="num">Aceitaram</th><th class="num">Reservas</th><th class="num">Conversão</th></tr></thead><tbody>
-        ${p.por_loja.map((l) => `<tr><td>${esc(l.loja)}</td><td class="num">${l.agendamentos}</td><td class="num">${l.ofertados}</td><td class="num">${l.aceitaram}</td><td class="num">${l.concluidas}</td><td class="num">${pct(l.conversao_total)}</td></tr>`).join('') || '<tr><td colspan="6" class="empty">Sem registros no período</td></tr>'}</tbody></table></div></div>
+      <div class="card"><h2>Por loja</h2><div class="tbl-wrap"><table><thead><tr><th>Loja</th><th class="num">Agend.</th><th class="num">Ofertados</th><th class="num">Aceitaram</th><th class="num">Concluídas</th><th class="num">Não concl.</th><th class="num">Sem reserva</th><th class="num">Conversão</th></tr></thead><tbody>
+        ${p.por_loja.map((l) => `<tr><td>${esc(l.loja)}</td><td class="num">${l.agendamentos}</td><td class="num">${l.ofertados}</td><td class="num">${l.aceitaram}</td><td class="num">${l.concluidas}</td><td class="num">${l.nao_concluidas}</td><td class="num">${l.aceitos_sem_reserva}</td><td class="num">${pct(l.conversao_total)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">Sem registros no período</td></tr>'}</tbody></table></div></div>
       <div class="card"><h2>Por colaborador <span class="muted small">(contatos no período)</span></h2><div class="tbl-wrap"><table><thead><tr><th>Colaborador</th><th class="num">Contatos</th><th class="num">Ofertas</th><th class="num">Aceites</th><th class="num">Recusas</th><th class="num">Não atend.</th><th class="num">Aceite</th></tr></thead><tbody>
         ${p.por_colaborador.map((c) => `<tr class="${c.contatos ? '' : 'zero'}"><td>${esc(c.nome)}</td><td class="num">${c.contatos}</td><td class="num">${c.ofertas}</td><td class="num">${c.aceites}</td><td class="num">${c.recusas}</td><td class="num">${c.nao_atendeu}</td><td class="num">${pct(c.taxa_aceite)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">Nenhum colaborador cadastrado</td></tr>'}</tbody></table></div></div></div>
     <div class="card mt"><h2>Atendimento KINTO</h2>

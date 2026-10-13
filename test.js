@@ -415,6 +415,16 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const vazio = (await call(gest, 'GET', '/api/painel?de=2020-01-01&ate=2020-01-02')).data;
     assert.deepStrictEqual(vazio.motivos.nao_concluida, []);
   });
+  await t('painel: contagem e taxa de locações não concluídas (total, por loja e CSV)', async () => {
+    const p = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data;
+    assert.ok(p.totais.nao_concluidas >= 1, 'há ao menos 1 não concluída');
+    const somaLojas = p.por_loja.reduce((s, l) => s + l.nao_concluidas, 0);
+    assert.strictEqual(somaLojas, p.totais.nao_concluidas, 'soma por loja = total');
+    const esperado = p.totais.nao_concluidas / (p.totais.concluidas + p.totais.nao_concluidas);
+    assert.ok(Math.abs(p.taxas.nao_conclusao - esperado) < 1e-9, 'taxa = não concluídas / reservas registradas');
+    const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
+    assert.ok(rel.includes('Reservas não concluídas;') && rel.includes('% não concluídas') && rel.includes('Locações não concluídas (não concluídas / reservas registradas);'));
+  });
   await t('backup: manual, listagem, download e permissão', async () => {
     assert.strictEqual((await call(colab, 'POST', '/api/admin/backups')).status, 403);
     assert.strictEqual((await call(gest, 'GET', '/api/admin/banco')).status, 403);
