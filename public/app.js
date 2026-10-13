@@ -308,7 +308,8 @@ async function carregaPainel() {
     <div class="kpis">${kpi('Agendamentos', t.agendamentos, '', cmp(t.agendamentos, ta && ta.agendamentos))}${kpi('Ofertados', t.ofertados, pct(r.oferta) + ' dos agendamentos', cmp(t.ofertados, ta && ta.ofertados))}${kpi('Aceitaram', t.aceitaram, pct(r.aceite) + ' dos ofertados', cmp(t.aceitaram, ta && ta.aceitaram))}
       ${kpi('Reservas concluídas', t.concluidas, pct(r.conversao_total) + ' dos agendamentos', cmp(t.concluidas, ta && ta.concluidas))}${kpi('Não concluídas', t.nao_concluidas, r.nao_conclusao == null ? 'sem reservas registradas' : pct(r.nao_conclusao) + ' das reservas registradas', cmp(t.nao_concluidas, ta && ta.nao_concluidas, { inverso: true }))}</div>
     <div class="kpis">${kpi('Receita', brl(t.receita), '', cmp(t.receita, ta && ta.receita, { fmt: brl }))}${kpi('Ticket médio', t.ticket_medio == null ? '—' : brl(t.ticket_medio), 'por reserva concluída', cmp(t.ticket_medio, ta && ta.ticket_medio, { fmt: brl }))}
-      ${kpi('Diárias', t.diarias, t.media_diarias == null ? 'sem reservas concluídas' : String(Math.round(t.media_diarias * 10) / 10).replace('.', ',') + ' por reserva', cmp(t.diarias, ta && ta.diarias))}${kpi('Aceite → reserva', fmtMin(tr.concluidas.mediana_min), 'mediana das concluídas', cmp(tr.concluidas.mediana_min, ant && ant.tempo_reserva.concluidas.mediana_min, { inverso: true, fmt: fmtMin }))}</div>
+      ${kpi('Diárias', t.diarias, t.media_diarias == null ? 'sem reservas concluídas' : String(Math.round(t.media_diarias * 10) / 10).replace('.', ',') + ' por reserva', cmp(t.diarias, ta && ta.diarias))}${kpi('Aceite → reserva', fmtMin(tr.concluidas.mediana_min), 'mediana das concluídas', cmp(tr.concluidas.mediana_min, ant && ant.tempo_reserva.concluidas.mediana_min, { inverso: true, fmt: fmtMin }))}
+      ${kpi('Locações: Agendamento', t.locacoes_agendamento, 'aceite na 1ª ligação', cmp(t.locacoes_agendamento, ta && ta.locacoes_agendamento))}${kpi('Locações: Confirmação', t.locacoes_confirmacao, 'aceite na confirmação', cmp(t.locacoes_confirmacao, ta && ta.locacoes_confirmacao))}</div>
     <div class="grid g2">
       <div class="card funnel"><h2>Funil</h2><div class="bars">${etapas.map(([n, v, c]) => `<div class="bar-row"><div class="name">${n}</div><div class="track"><div class="bar ${c}" data-w="${(v / base) * 100}"></div></div><div class="n">${v} · ${Math.round((v / base) * 100)}%</div></div>`).join('')}</div>
         <div class="rates"><div class="rate"><b>${pct(r.oferta)}</b><span>Taxa de oferta</span></div><div class="rate"><b>${pct(r.aceite)}</b><span>Taxa de aceite</span></div>
@@ -322,21 +323,6 @@ async function carregaPainel() {
       <div class="card"><h2>Motivos de aceite</h2>${barras(p.motivos.aceite, 'ok')}</div>
       <div class="card"><h2>Ainda não decidiu</h2>${barras(p.motivos.indeciso, 'warn')}</div>
       <div class="card"><h2>Locação não concluída</h2>${barras(p.motivos.nao_concluida, 'bad')}</div></div>
-    ${(() => {
-      const [ag, cf] = p.por_etapa, og = p.origem_aceite;
-      const linha = (n, k, f = (x) => x) => `<tr><td>${n}</td><td class="num">${f(ag[k])}</td><td class="num">${f(cf[k])}</td></tr>`;
-      let ins = '';
-      if (ag.taxa_aceite != null && cf.taxa_aceite != null) {
-        const m = ag.taxa_aceite >= cf.taxa_aceite ? ['Agendamento', ag.taxa_aceite, 'Confirmação', cf.taxa_aceite] : ['Confirmação', cf.taxa_aceite, 'Agendamento', ag.taxa_aceite];
-        ins = ag.taxa_aceite === cf.taxa_aceite ? 'A taxa de aceite é igual nas duas etapas.' : `A taxa de aceite é maior na <b>${m[0]}</b> (${pct(m[1])} contra ${pct(m[3])} na ${m[2]}).`;
-      } else ins = 'Ainda não há ofertas nas duas etapas para comparar.';
-      return `<div class="card mt"><h2>Resultado por etapa</h2><div class="tbl-wrap"><table><thead><tr><th></th><th class="num">Agendamento</th><th class="num">Confirmação</th></tr></thead><tbody>
-        ${linha('Contatos registrados', 'contatos')}${linha('Não atendeu', 'nao_atendeu')}${linha('Ofertas (aceitou, recusou ou indeciso)', 'ofertas')}${linha('Aceitaram', 'aceites')}${linha('Recusaram', 'recusas')}${linha('Ainda não decidiu', 'indecisos')}${linha('Não ofertado', 'nao_ofertado')}
-        <tr class="tot"><td><b>Taxa de aceite</b> (aceites ÷ ofertas)</td><td class="num"><b>${pct(ag.taxa_aceite)}</b></td><td class="num"><b>${pct(cf.taxa_aceite)}</b></td></tr>
-        <tr><td>Taxa de atendimento (atenderam ÷ contatos)</td><td class="num">${pct(ag.taxa_atendimento)}</td><td class="num">${pct(cf.taxa_atendimento)}</td></tr></tbody></table></div>
-        <p class="mt">${ins}</p>
-        <p class="muted small">Dos <b>${og.total}</b> casos que aceitaram: <b>${og.agendamento}</b> já no Agendamento e <b>${og.confirmacao}</b> na Confirmação${og.confirmacao ? ` (${og.confirmacao_apos_recusa} tinham recusado, ${og.confirmacao_apos_indeciso} estavam indecisos e ${og.confirmacao_sem_oferta_previa} não tinham recebido oferta antes)` : ''}. Contagem por contato registrado nos casos do período; o mesmo cliente pode ter mais de um contato por etapa.</p></div>`;
-    })()}
     <div class="card mt"><h2>Tempo do aceite até a reserva</h2><div class="tbl-wrap"><table><thead><tr><th>Desfecho</th><th class="num">Reservas</th><th class="num">Mediana</th><th class="num">Média</th>${ant ? '<th class="num">Mediana (período anterior)</th>' : ''}</tr></thead><tbody>
       ${[['Concluídas', tr.concluidas, ant && ant.tempo_reserva.concluidas], ['Não concluídas', tr.nao_concluidas, ant && ant.tempo_reserva.nao_concluidas]].map(([n, x, y]) => `<tr><td>${n}</td><td class="num">${x.n}</td><td class="num">${fmtMin(x.mediana_min)}</td><td class="num">${fmtMin(x.media_min)}</td>${ant ? `<td class="num">${fmtMin(y && y.mediana_min)}</td>` : ''}</tr>`).join('')}</tbody></table></div>
       <p class="muted small">Do primeiro "Aceitou" até o registro da reserva. Se as não concluídas demoram mais que as concluídas, a demora no atendimento pode estar custando locações.</p></div>

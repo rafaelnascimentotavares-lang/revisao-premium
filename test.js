@@ -439,22 +439,25 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
     assert.ok(rel.includes('Ticket médio por reserva concluída (R$);') && rel.includes('Tempo do aceite até a reserva\r\nDesfecho;') && rel.includes('Comparativo com o período anterior'));
   });
-  await t('painel: resultado por etapa e origem dos aceites', async () => {
+  await t('painel: locações concluídas por etapa (aceite no Agendamento descarta a Confirmação)', async () => {
     const p = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data;
-    assert.deepStrictEqual(p.por_etapa.map((e) => e.etapa), ['Agendamento', 'Confirmação']);
-    const soma = (k) => p.por_etapa.reduce((s, e) => s + e[k], 0);
-    const todos = (await call(adm, 'GET', `/api/export/contatos.csv?de=${rev}&ate=${rev}`)).data.split('\r\n').filter(Boolean).length - 1;
-    assert.ok(soma('contatos') > 0 && soma('contatos') <= todos + 5, 'contatos somados');
-    for (const e of p.por_etapa) {
-      assert.strictEqual(e.contatos, e.ofertas + e.nao_atendeu + e.nao_ofertado, 'ofertas + não atendeu + não ofertado = contatos');
-      if (e.ofertas) assert.ok(Math.abs(e.taxa_aceite - e.aceites / e.ofertas) < 1e-9);
-    }
-    const og = p.origem_aceite;
-    assert.strictEqual(og.total, p.totais.aceitaram, 'casos que aceitaram = aceitaram');
-    assert.strictEqual(og.agendamento + og.confirmacao, og.total);
-    assert.strictEqual(og.confirmacao_apos_recusa + og.confirmacao_apos_indeciso + og.confirmacao_sem_oferta_previa, og.confirmacao);
+    const x = p.totais;
+    assert.strictEqual(x.locacoes_agendamento + x.locacoes_confirmacao + x.locacoes_sem_origem, x.concluidas, 'cada locação concluída conta em uma única etapa');
+    assert.ok(x.locacoes_agendamento >= 1, 'há locação originada no Agendamento');
+    // cliente que aceitou no Agendamento e voltou a aceitar na Confirmação continua só no Agendamento
+    const r = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Etapa Teste', telefone: '62 95555-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
+    assert.strictEqual(r.status, 201, JSON.stringify(r.data));
+    const r2 = await call(colab, 'POST', '/api/contatos', { etapa: 'Confirmação', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Etapa Teste', telefone: '62 95555-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
+    assert.strictEqual(r2.status, 201, JSON.stringify(r2.data));
+    const id = (await call(gest, 'GET', '/api/casos?q=Etapa%20Teste')).data.find((c) => c.cliente_nome === 'Etapa Teste').id;
+    const antes = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data.totais;
+    const rr = await call(gest, 'PUT', `/api/casos/${id}/reserva`, { status: 'Concluída', diarias: 2 });
+    assert.strictEqual(rr.status, 200, JSON.stringify(rr.data));
+    const depois = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data.totais;
+    assert.strictEqual(depois.locacoes_agendamento, antes.locacoes_agendamento + 1);
+    assert.strictEqual(depois.locacoes_confirmacao, antes.locacoes_confirmacao, 'Confirmação descartada');
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
-    assert.ok(rel.includes('Resultado por etapa (contatos)') && rel.includes('Origem dos aceites'));
+    assert.ok(rel.includes('Locações concluídas — aceitaram no Agendamento;') && rel.includes('aceitaram na Confirmação;'));
   });
   await t('backup: manual, listagem, download e permissão', async () => {
     assert.strictEqual((await call(colab, 'POST', '/api/admin/backups')).status, 403);
