@@ -61,6 +61,10 @@ Banco e backups ficam fora da pasta do programa em produção (`DATA_DIR`, padr�
 - **Taxa de oferta** = ofertados ÷ agendamentos · **Aceite** = aceitaram ÷ ofertados · **Recuperação** = "ainda não decidiu" que aceitaram depois ÷ "ainda não decidiu".
 - **Aceite → reserva** = reservas concluídas ÷ aceitaram · **Conversão total** = reservas concluídas ÷ agendamentos.
 - **Aceite → reserva** conta só reservas de clientes que aceitaram; reserva fechada com cliente que ficou só indeciso entra em reservas e receita, mas não nessa taxa.
+- **Não concluídas** = reservas registradas como "Não concluída"; **% não concluídas** = não concluídas ÷ (concluídas + não concluídas).
+- **Ticket médio** = receita ÷ reservas concluídas · **Média de diárias** = diárias ÷ reservas concluídas.
+- **Tempo do aceite até a reserva** = do primeiro "Aceitou" até o primeiro registro da reserva (mediana e média), separado entre concluídas e não concluídas. Reservas criadas antes desta versão usam a data da última atualização.
+- **Comparativo**: cada indicador é comparado com o período imediatamente anterior de mesmo tamanho (ex.: 7 dias × 7 dias anteriores), com os mesmos filtros de loja e colaborador. Também está no CSV do painel.
 - Reservas e receita só contam o que o time KINTO (ou o gestor) registra na ficha. Aceitar na ligação não é locação.
 - A **loja do caso** é a loja da revisão escolhida no agendamento; a confirmação não a altera.
 - Para as taxas fazerem sentido, **todo agendamento deve entrar no app**, inclusive "Não atendeu" e "Não ofertado".

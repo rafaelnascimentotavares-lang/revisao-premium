@@ -282,7 +282,18 @@ async function carregaPainel() {
   try { p = await api(`/painel?de=${S.f.de}&ate=${S.f.ate}&loja=${S.f.loja}&colab=${S.f.colab}`); }
   catch (e) { if (S.me) box.innerHTML = `<div class="alert">${esc(e.message)}</div>`; return; }
   const t = p.totais, r = p.taxas;
-  const kpi = (l, v, s) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s || '&nbsp;'}</div></div>`;
+  const ant = p.anterior, ta = ant && ant.totais, tr = p.tempo_reserva;
+  const fmtMin = (m) => (m == null ? '—' : m < 60 ? m + ' min' : m < 1440 ? Math.floor(m / 60) + ' h ' + (m % 60) + ' min' : Math.floor(m / 1440) + ' d ' + Math.floor((m % 1440) / 60) + ' h');
+  // variação contra o período anterior; "inverso" = subir é ruim (ex.: não concluídas, tempo)
+  const cmp = (a, b, { inverso = false, fmt = (x) => x } = {}) => {
+    if (!ant || b == null || a == null) return '';
+    if (b === 0) return a === 0 ? `<span class="cmp flat">= anterior (${fmt(b)})</span>` : `<span class="cmp flat">anterior: ${fmt(b)}</span>`;
+    const d = (a - b) / b;
+    if (Math.abs(d) < 0.005) return `<span class="cmp flat">= anterior (${fmt(b)})</span>`;
+    const bom = inverso ? d < 0 : d > 0;
+    return `<span class="cmp ${bom ? 'good' : 'bad'}">${d > 0 ? '▲' : '▼'} ${Math.abs(d * 100).toFixed(0)}% · anterior ${fmt(b)}</span>`;
+  };
+  const kpi = (l, v, s, c) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s || '&nbsp;'}</div>${c || ''}</div>`;
   const etapas = [['Agendamentos', t.agendamentos, ''], ['Contatados', t.contatados, ''], ['Ofertados', t.ofertados, ''], ['Aceitaram', t.aceitaram, 'ok'], ['Reserva concluída', t.concluidas, 'ok'], ['Reserva não concluída', t.nao_concluidas, 'bad'], ['Aceitou, sem reserva ainda', t.aceitos_sem_reserva, 'warn']];
   const base = t.agendamentos || 1;
   // série diária (agrupa por semana quando passa de 31 dias)
@@ -294,8 +305,10 @@ async function carregaPainel() {
   const mx = Math.max(1, ...serie.flatMap((x) => [x.agendamentos, x.aceitaram, x.concluidas]));
   box.innerHTML = `
     ${t.aceitos_sem_reserva ? `<div class="alert"><b>${t.aceitos_sem_reserva}</b> ${t.aceitos_sem_reserva === 1 ? 'cliente aceitou' : 'clientes aceitaram'} e ainda não ${t.aceitos_sem_reserva === 1 ? 'tem' : 'têm'} reserva registrada. <a href="#/casos" id="goac">Ver casos</a></div>` : ''}
-    <div class="kpis">${kpi('Agendamentos', t.agendamentos)}${kpi('Ofertados', t.ofertados, pct(r.oferta) + ' dos agendamentos')}${kpi('Aceitaram', t.aceitaram, pct(r.aceite) + ' dos ofertados')}
-      ${kpi('Reservas concluídas', t.concluidas, pct(r.conversao_total) + ' dos agendamentos')}${kpi('Não concluídas', t.nao_concluidas, r.nao_conclusao == null ? 'sem reservas registradas' : pct(r.nao_conclusao) + ' das reservas registradas')}${kpi('Diárias', t.diarias)}${kpi('Receita', brl(t.receita))}</div>
+    <div class="kpis">${kpi('Agendamentos', t.agendamentos, '', cmp(t.agendamentos, ta && ta.agendamentos))}${kpi('Ofertados', t.ofertados, pct(r.oferta) + ' dos agendamentos', cmp(t.ofertados, ta && ta.ofertados))}${kpi('Aceitaram', t.aceitaram, pct(r.aceite) + ' dos ofertados', cmp(t.aceitaram, ta && ta.aceitaram))}
+      ${kpi('Reservas concluídas', t.concluidas, pct(r.conversao_total) + ' dos agendamentos', cmp(t.concluidas, ta && ta.concluidas))}${kpi('Não concluídas', t.nao_concluidas, r.nao_conclusao == null ? 'sem reservas registradas' : pct(r.nao_conclusao) + ' das reservas registradas', cmp(t.nao_concluidas, ta && ta.nao_concluidas, { inverso: true }))}</div>
+    <div class="kpis">${kpi('Receita', brl(t.receita), '', cmp(t.receita, ta && ta.receita, { fmt: brl }))}${kpi('Ticket médio', t.ticket_medio == null ? '—' : brl(t.ticket_medio), 'por reserva concluída', cmp(t.ticket_medio, ta && ta.ticket_medio, { fmt: brl }))}
+      ${kpi('Diárias', t.diarias, t.media_diarias == null ? 'sem reservas concluídas' : String(Math.round(t.media_diarias * 10) / 10).replace('.', ',') + ' por reserva', cmp(t.diarias, ta && ta.diarias))}${kpi('Aceite → reserva', fmtMin(tr.concluidas.mediana_min), 'mediana das concluídas', cmp(tr.concluidas.mediana_min, ant && ant.tempo_reserva.concluidas.mediana_min, { inverso: true, fmt: fmtMin }))}</div>
     <div class="grid g2">
       <div class="card funnel"><h2>Funil</h2><div class="bars">${etapas.map(([n, v, c]) => `<div class="bar-row"><div class="name">${n}</div><div class="track"><div class="bar ${c}" data-w="${(v / base) * 100}"></div></div><div class="n">${v} · ${Math.round((v / base) * 100)}%</div></div>`).join('')}</div>
         <div class="rates"><div class="rate"><b>${pct(r.oferta)}</b><span>Taxa de oferta</span></div><div class="rate"><b>${pct(r.aceite)}</b><span>Taxa de aceite</span></div>
@@ -309,6 +322,9 @@ async function carregaPainel() {
       <div class="card"><h2>Motivos de aceite</h2>${barras(p.motivos.aceite, 'ok')}</div>
       <div class="card"><h2>Ainda não decidiu</h2>${barras(p.motivos.indeciso, 'warn')}</div>
       <div class="card"><h2>Locação não concluída</h2>${barras(p.motivos.nao_concluida, 'bad')}</div></div>
+    <div class="card mt"><h2>Tempo do aceite até a reserva</h2><div class="tbl-wrap"><table><thead><tr><th>Desfecho</th><th class="num">Reservas</th><th class="num">Mediana</th><th class="num">Média</th>${ant ? '<th class="num">Mediana (período anterior)</th>' : ''}</tr></thead><tbody>
+      ${[['Concluídas', tr.concluidas, ant && ant.tempo_reserva.concluidas], ['Não concluídas', tr.nao_concluidas, ant && ant.tempo_reserva.nao_concluidas]].map(([n, x, y]) => `<tr><td>${n}</td><td class="num">${x.n}</td><td class="num">${fmtMin(x.mediana_min)}</td><td class="num">${fmtMin(x.media_min)}</td>${ant ? `<td class="num">${fmtMin(y && y.mediana_min)}</td>` : ''}</tr>`).join('')}</tbody></table></div>
+      <p class="muted small">Do primeiro "Aceitou" até o registro da reserva. Se as não concluídas demoram mais que as concluídas, a demora no atendimento pode estar custando locações.</p></div>
     <div class="grid mt">
       <div class="card"><h2>Por loja</h2><div class="tbl-wrap"><table><thead><tr><th>Loja</th><th class="num">Agend.</th><th class="num">Ofertados</th><th class="num">Aceitaram</th><th class="num">Concluídas</th><th class="num">Não concl.</th><th class="num">Sem reserva</th><th class="num">Conversão</th></tr></thead><tbody>
         ${p.por_loja.map((l) => `<tr><td>${esc(l.loja)}</td><td class="num">${l.agendamentos}</td><td class="num">${l.ofertados}</td><td class="num">${l.aceitaram}</td><td class="num">${l.concluidas}</td><td class="num">${l.nao_concluidas}</td><td class="num">${l.aceitos_sem_reserva}</td><td class="num">${pct(l.conversao_total)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">Sem registros no período</td></tr>'}</tbody></table></div></div>
@@ -320,7 +336,7 @@ async function carregaPainel() {
       <div class="rate"><b>${p.atendimento.mediana_assumir_min == null ? '—' : p.atendimento.mediana_assumir_min + ' min'}</b><span>Mediana até assumir</span></div></div>
       <div class="tbl-wrap mt"><table><thead><tr><th>Consultor</th><th class="num">Assumidos</th><th class="num">Concluídas</th><th class="num">Não concluídas</th><th class="num">Mediana até assumir</th></tr></thead><tbody>
       ${p.atendimento.por_atendente.map((a) => `<tr><td>${esc(a.nome)}</td><td class="num">${a.assumidos}</td><td class="num">${a.concluidas}</td><td class="num">${a.nao_concluidas}</td><td class="num">${a.mediana_assumir_min == null ? '—' : a.mediana_assumir_min + ' min'}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nenhum atendimento no período</td></tr>'}</tbody></table></div></div>
-    <p class="muted small">Contatados = casos com alguma resposta diferente de "Não atendeu". Ofertados = Aceitou, Recusou ou Ainda não decidiu. Receita e reservas vêm do registro de locação feito pelo time KINTO (ou pelo gestor).</p>`;
+    <p class="muted small">Contatados = casos com alguma resposta diferente de "Não atendeu". Ofertados = Aceitou, Recusou ou Ainda não decidiu. Receita e reservas vêm do registro de locação feito pelo time KINTO (ou pelo gestor).${ant ? ` As setas comparam com ${fmtData(ant.periodo.de)} a ${fmtData(ant.periodo.ate)} (período anterior de mesmo tamanho); se o período atual ainda está em andamento, a comparação é com o anterior completo.` : ''}</p>`;
   applyBars(box);
   const go = $('#goac'); if (go) go.addEventListener('click', () => { S.c.filtro = 'aceitos_sem_reserva'; });
   marcaLive(p.gerado_em.slice(11, 19));

@@ -425,6 +425,20 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
     assert.ok(rel.includes('Reservas não concluídas;') && rel.includes('% não concluídas') && rel.includes('Locações não concluídas (não concluídas / reservas registradas);'));
   });
+  await t('painel: ticket médio, tempo do aceite até a reserva e comparativo com período anterior', async () => {
+    const p = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data;
+    assert.ok(p.totais.concluidas > 0 && Math.abs(p.totais.ticket_medio - p.totais.receita / p.totais.concluidas) < 0.01, 'ticket médio = receita / concluídas');
+    assert.ok(Math.abs(p.totais.media_diarias - p.totais.diarias / p.totais.concluidas) < 1e-9, 'média de diárias');
+    const tc = p.tempo_reserva.concluidas;
+    assert.ok(tc.n >= 1 && tc.mediana_min >= 0 && tc.media_min >= 0, 'tempo aceite→reserva calculado');
+    assert.strictEqual(p.anterior.periodo.ate, addDaysT(rev, -1), 'período anterior termina na véspera');
+    assert.strictEqual(p.anterior.periodo.de, addDaysT(rev, -1), 'mesmo tamanho (1 dia)');
+    assert.ok(p.anterior.totais && !('anterior' in p.anterior), 'sem recursão');
+    const sete = (await call(gest, 'GET', `/api/painel?de=${addDaysT(rev, -6)}&ate=${rev}`)).data;
+    assert.strictEqual(sete.anterior.periodo.de, addDaysT(rev, -13)); assert.strictEqual(sete.anterior.periodo.ate, addDaysT(rev, -7));
+    const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
+    assert.ok(rel.includes('Ticket médio por reserva concluída (R$);') && rel.includes('Tempo do aceite até a reserva\r\nDesfecho;') && rel.includes('Comparativo com o período anterior'));
+  });
   await t('backup: manual, listagem, download e permissão', async () => {
     assert.strictEqual((await call(colab, 'POST', '/api/admin/backups')).status, 403);
     assert.strictEqual((await call(gest, 'GET', '/api/admin/banco')).status, 403);

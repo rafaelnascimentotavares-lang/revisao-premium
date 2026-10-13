@@ -79,6 +79,8 @@ select:disabled, input:disabled { background: #f0f4f7; color: #8794a0; }
 .kpi { background: var(--card); border: 1px solid var(--line); border-radius: var(--radius); padding: 14px 16px; }
 .kpi .v { font-size: 30px; font-weight: 700; color: var(--dark); line-height: 1.1; }
 .kpi .l { font-size: 13px; color: var(--muted); font-weight: 600; }
+.kpi .cmp { display: block; font-size: 12px; font-weight: 600; margin-top: 3px; }
+.cmp.good { color: #2e9b73; } .cmp.bad { color: #c75b5b; } .cmp.flat { color: var(--muted); }
 .kpi .s { font-size: 13px; color: var(--teal); font-weight: 600; margin-top: 2px; }
 .live { font-size: 13px; color: var(--muted); display: flex; align-items: center; gap: 6px; }
 .dot { width: 9px; height: 9px; border-radius: 50%; background: #9aa6b0; display: inline-block; }

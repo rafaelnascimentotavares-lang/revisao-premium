@@ -28,7 +28,10 @@ if (DB_PATH !== ':memory:') {
 let BANCO_MIGRADO_DE = null;
 if (DB_PATH !== ':memory:' && !fs.existsSync(DB_PATH)) {
   const antigo = path.join(PASTA_LEGADA, 'app.db');
-  if (path.resolve(antigo) !== path.resolve(DB_PATH) && fs.existsSync(antigo)) {
+  const pastaBk = process.env.BACKUP_DIR || path.join(path.dirname(DB_PATH), 'backups');
+  let temBackups = false; try { temBackups = fs.readdirSync(pastaBk).some((n) => /^app-.*\.db$/.test(n)); } catch { /* sem pasta */ }
+  // se já existem backups na pasta de dados, eles (mais recentes) têm prioridade: a recuperação automática cuida disso
+  if (!temBackups && path.resolve(antigo) !== path.resolve(DB_PATH) && fs.existsSync(antigo)) {
     const t = new DatabaseSync(antigo);
     try { t.exec(`VACUUM INTO '${DB_PATH.replace(/'/g, "''")}'`); BANCO_MIGRADO_DE = antigo; } finally { t.close(); }
   }
@@ -143,8 +146,8 @@ CREATE TABLE IF NOT EXISTS auditoria (
 `);
 
 // ---------- versão do esquema e migrações ----------
-// v1 = modelo original; v2 = colunas email_alerta/escalado_em/motivo_nao_conclusao + índices extras + tabela meta.
-const SCHEMA_VERSAO = 2;
+// v3 = reservas.criado_em (tempo do aceite até a reserva); v1 = modelo original; v2 = colunas email_alerta/escalado_em/motivo_nao_conclusao + índices extras + tabela meta.
+const SCHEMA_VERSAO = 3;
 const TABELAS = ['lojas', 'usuarios', 'sessoes', 'motivos', 'casos', 'contatos', 'reservas', 'atendimentos', 'auditoria'];
 function garanteColuna(tabela, coluna, def) {
   const cols = db.prepare(`PRAGMA table_info(${tabela})`).all().map((c) => c.name);
@@ -155,6 +158,8 @@ function migrar() {
   garanteColuna('lojas', 'email_alerta', 'TEXT');
   garanteColuna('casos', 'escalado_em', 'TEXT');
   garanteColuna('reservas', 'motivo_nao_conclusao', 'TEXT');
+  garanteColuna('reservas', 'criado_em', 'TEXT');
+  db.exec('UPDATE reservas SET criado_em = atualizado_em WHERE criado_em IS NULL');
   db.exec(`
     CREATE INDEX IF NOT EXISTS ix_casos_loja ON casos(loja_id);
     CREATE INDEX IF NOT EXISTS ix_contatos_resultado ON contatos(resultado);

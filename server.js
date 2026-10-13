@@ -279,7 +279,7 @@ function intervalo(q) {
 const pct = (a, b) => (b ? a / b : null);
 const mediana = (v) => { if (!v.length) return null; const s = [...v].sort((a, b) => a - b); const m = Math.floor(s.length / 2); return s.length % 2 ? s[m] : Math.round((s[m - 1] + s[m]) / 2); };
 
-function painel(q) {
+function painel(q, { anterior = true } = {}) {
   const { de, ate } = intervalo(q);
   const loja = Number(q.loja) || null, colab = Number(q.colab) || null;
   const params = [de, ate];
@@ -288,7 +288,7 @@ function painel(q) {
   if (colab) { where += ' AND c.usuario_id = ?'; params.push(colab); }
 
   const casos = db.prepare(`SELECT c.id, c.loja_id, c.data_local FROM casos c WHERE ${where}`).all(...params);
-  const contatos = db.prepare(`SELECT t.id, t.caso_id, t.resultado, m.descricao AS motivo FROM contatos t
+  const contatos = db.prepare(`SELECT t.id, t.caso_id, t.resultado, t.criado_em, m.descricao AS motivo FROM contatos t
     JOIN motivos m ON m.id = t.motivo_id JOIN casos c ON c.id = t.caso_id WHERE t.ativo = 1 AND ${where} ORDER BY t.id`).all(...params);
   const reservas = db.prepare(`SELECT r.* FROM reservas r JOIN casos c ON c.id = r.caso_id WHERE ${where}`).all(...params);
 
@@ -400,15 +400,39 @@ function painel(q) {
       .sort((a, b) => b.assumidos - a.assumidos),
   };
 
+  // ticket médio e média de diárias (reservas concluídas)
+  const ticketMedio = concl.length ? receita / concl.length : null;
+  const mediaDiarias = concl.length ? diarias / concl.length : null;
+  // tempo do 1º aceite até o registro da reserva (minutos), separado por desfecho
+  const tempos = { concluida: [], nao_concluida: [] };
+  for (const r of reservas) {
+    const lista = porCaso.get(r.caso_id) || [];
+    const a = lista.find((t) => t.resultado === 'Aceitou');
+    if (!a) continue;
+    const m = alertas.minutosEntre(a.criado_em, r.criado_em || r.atualizado_em);
+    if (m >= 0) (r.status === 'Concluída' ? tempos.concluida : tempos.nao_concluida).push(m);
+  }
+  const resumoTempo = (v) => ({ n: v.length, mediana_min: mediana(v), media_min: v.length ? Math.round(v.reduce((s, x) => s + x, 0) / v.length) : null });
+  const tempoReserva = { concluidas: resumoTempo(tempos.concluida), nao_concluidas: resumoTempo(tempos.nao_concluida) };
+
+  // período anterior de mesmo tamanho (mesmos filtros) para comparação
+  let anteriorPeriodo = null;
+  if (anterior) {
+    const dias = Math.round((new Date(ate + 'T12:00:00Z') - new Date(de + 'T12:00:00Z')) / 86400000) + 1;
+    const a = painel({ ...q, de: addDays(de, -dias), ate: addDays(de, -1) }, { anterior: false });
+    anteriorPeriodo = { periodo: a.periodo, totais: a.totais, taxas: a.taxas, tempo_reserva: a.tempo_reserva };
+  }
   return {
     periodo: { de, ate }, gerado_em: agora,
-    totais: { ...tot, diarias, receita, concluidas_de_aceitos: concluidasDeAceitos },
+    totais: { ...tot, diarias, receita, concluidas_de_aceitos: concluidasDeAceitos, ticket_medio: ticketMedio, media_diarias: mediaDiarias },
     taxas: taxas(tot),
     serie: [...dias.values()],
     motivos: { recusa: conta('Recusou'), aceite: conta('Aceitou'), indeciso: conta('Ainda não decidiu'), nao_atendeu: conta('Não atendeu'), nao_ofertado: conta('Não ofertado'), nao_concluida: motivosNaoConcluida },
     por_loja: [...porLoja].map(([id, a]) => ({ loja: nomeLoja.get(id) || '—', ...a, ...taxas(a) })).sort((a, b) => b.agendamentos - a.agendamentos),
     por_colaborador: porColab,
     atendimento,
+    tempo_reserva: tempoReserva,
+    anterior: anteriorPeriodo,
   };
 }
 app.get('/api/painel', auth, gestor, wrap((req, res) => res.json(painel(req.query))));
@@ -518,11 +542,11 @@ function salvarReserva(userId, id, b) {
   if (!Number.isFinite(valorDia) || valorDia < 0 || valorDia > 100000) throw bad('Valor da diária inválido');
   const total = status === 'Concluída' && diarias != null ? Math.round(diarias * valorDia * 100) / 100 : null;
   const antes = db.prepare('SELECT * FROM reservas WHERE caso_id = ?').get(id);
-  db.prepare(`INSERT INTO reservas (caso_id, status, motivo_nao_conclusao, retirada, devolucao, modelo, diarias, valor_diaria, valor_total, registrado_por, atualizado_em)
-    VALUES (?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(caso_id) DO UPDATE SET status=excluded.status, motivo_nao_conclusao=excluded.motivo_nao_conclusao,
+  db.prepare(`INSERT INTO reservas (caso_id, status, motivo_nao_conclusao, retirada, devolucao, modelo, diarias, valor_diaria, valor_total, registrado_por, atualizado_em, criado_em)
+    VALUES (?,?,?,?,?,?,?,?,?,?,?,?) ON CONFLICT(caso_id) DO UPDATE SET status=excluded.status, motivo_nao_conclusao=excluded.motivo_nao_conclusao,
     retirada=excluded.retirada, devolucao=excluded.devolucao, modelo=excluded.modelo, diarias=excluded.diarias, valor_diaria=excluded.valor_diaria,
     valor_total=excluded.valor_total, registrado_por=excluded.registrado_por, atualizado_em=excluded.atualizado_em`)
-    .run(id, status, motivoNc, retirada, devolucao, txt(b.modelo, 60) || null, diarias, valorDia, total, userId, nowBR());
+    .run(id, status, motivoNc, retirada, devolucao, txt(b.modelo, 60) || null, diarias, valorDia, total, userId, nowBR(), nowBR());
   const depois = db.prepare('SELECT * FROM reservas WHERE caso_id = ?').get(id);
   auditar(userId, 'reserva', depois.id, antes ? 'edicao' : 'criacao', antes, depois);
 }
@@ -640,6 +664,7 @@ function csv(rows, cols) {
 const num = (n) => (n == null ? '' : String(n).replace('.', ',')); // decimais no padrão do Excel pt-BR
 const brNum = (n) => (n == null ? '' : (Math.round(n * 100) / 100).toFixed(2).replace('.', ','));
 const brPct = (n) => (n == null ? '' : (n * 100).toFixed(1).replace('.', ',') + '%');
+const fmtMin = (m) => (m == null ? '' : m < 60 ? `${m} min` : m < 1440 ? `${Math.floor(m / 60)} h ${m % 60} min` : `${Math.floor(m / 1440)} d ${Math.floor((m % 1440) / 60)} h`);
 const brData = (d) => (d ? `${d.slice(8, 10)}/${d.slice(5, 7)}/${d.slice(0, 4)}` : '');
 const brHora = (d) => (d ? brData(d.slice(0, 10)) + ' ' + d.slice(11, 16) : '');
 const baixar = (res, nome, corpo) => {
@@ -694,9 +719,25 @@ app.get('/api/export/painel.csv', auth, gestor, wrap((req, res) => {
   bloco('Relatório do painel | Revisão Premium', null, [['Período', `${brData(p.periodo.de)} a ${brData(p.periodo.ate)}`], ['Loja', lojaNome || 'Todas'], ['Colaborador', colabNome || 'Todos'], ['Gerado em', brHora(p.gerado_em)]]);
   bloco('Indicadores', ['Indicador', 'Valor'], [['Agendamentos', t.agendamentos], ['Contatados', t.contatados], ['Ofertados', t.ofertados], ['Aceitaram', t.aceitaram], ['Recusaram', t.recusaram],
     ['Ainda não decidiram', t.indecisos], ['Indecisos que aceitaram depois', t.recuperados], ['Reservas concluídas', t.concluidas], ['Reservas não concluídas', t.nao_concluidas],
-    ['Aceitaram sem reserva', t.aceitos_sem_reserva], ['Diárias', t.diarias], ['Receita (R$)', brNum(t.receita)]]);
+    ['Aceitaram sem reserva', t.aceitos_sem_reserva], ['Diárias', t.diarias], ['Receita (R$)', brNum(t.receita)],
+    ['Ticket médio por reserva concluída (R$)', brNum(t.ticket_medio)], ['Média de diárias por reserva concluída', num(t.media_diarias == null ? null : Math.round(t.media_diarias * 10) / 10)]]);
   bloco('Taxas', ['Taxa', 'Valor'], [['Taxa de oferta (ofertados / agendamentos)', brPct(r.oferta)], ['Taxa de aceite (aceitaram / ofertados)', brPct(r.aceite)], ['Recuperação na confirmação', brPct(r.recuperacao)],
     ['Aceite para reserva', brPct(r.aceite_reserva)], ['Locações não concluídas (não concluídas / reservas registradas)', brPct(r.nao_conclusao)], ['Conversão total (reservas / agendamentos)', brPct(r.conversao_total)]]);
+  const tr = p.tempo_reserva;
+  bloco('Tempo do aceite até a reserva', ['Desfecho', 'Reservas', 'Mediana', 'Média'], [
+    ['Concluídas', tr.concluidas.n, fmtMin(tr.concluidas.mediana_min), fmtMin(tr.concluidas.media_min)],
+    ['Não concluídas', tr.nao_concluidas.n, fmtMin(tr.nao_concluidas.mediana_min), fmtMin(tr.nao_concluidas.media_min)]]);
+  if (p.anterior) {
+    const an = p.anterior, ta = an.totais, ra = an.taxas;
+    const var_ = (a, b) => (b ? brPct((a - b) / b) : '');
+    const lin = (nome, a, b, f = (x) => x) => [nome, f(a), f(b), var_(a, b)];
+    bloco(`Comparativo com o período anterior (${brData(an.periodo.de)} a ${brData(an.periodo.ate)})`, ['Indicador', 'Período atual', 'Período anterior', 'Variação'], [
+      lin('Agendamentos', t.agendamentos, ta.agendamentos), lin('Ofertados', t.ofertados, ta.ofertados), lin('Aceitaram', t.aceitaram, ta.aceitaram),
+      lin('Reservas concluídas', t.concluidas, ta.concluidas), lin('Reservas não concluídas', t.nao_concluidas, ta.nao_concluidas),
+      lin('Receita (R$)', t.receita, ta.receita, brNum), lin('Ticket médio (R$)', t.ticket_medio || 0, ta.ticket_medio || 0, brNum),
+      ['Taxa de aceite', brPct(r.aceite), brPct(ra.aceite), ''], ['Conversão total', brPct(r.conversao_total), brPct(ra.conversao_total), ''],
+      ['Tempo mediano aceite → reserva concluída', fmtMin(tr.concluidas.mediana_min), fmtMin(an.tempo_reserva.concluidas.mediana_min), '']]);
+  }
   bloco('Por dia', ['Data', 'Agendamentos', 'Ofertados', 'Aceitaram', 'Reservas concluídas'], p.serie.map((d) => [brData(d.data), d.agendamentos, d.ofertados, d.aceitaram, d.concluidas]));
   for (const [titulo, lista] of [['Motivos de recusa', p.motivos.recusa], ['Motivos de aceite', p.motivos.aceite], ['Motivos de indecisão', p.motivos.indeciso], ['Motivos de não atendeu', p.motivos.nao_atendeu], ['Motivos de não ofertado', p.motivos.nao_ofertado], ['Motivos de locação não concluída', p.motivos.nao_concluida]]) {
     const tot = lista.reduce((s, x) => s + x.n, 0);
