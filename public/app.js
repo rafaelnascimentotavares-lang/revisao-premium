@@ -480,7 +480,7 @@ async function abreCaso(id) {
     const c = d.caso, rv = d.reserva || {};
     const cab = editCaso ? `<form data-f="caso" class="row"><div class="field"><label>Nome</label><input name="cliente_nome" value="${esc(c.cliente_nome)}"></div><div class="field"><label>Telefone</label><input name="telefone" value="${esc(fmtTel(c.telefone))}"></div>
       <div class="field"><label>Data da revisão</label><input type="date" name="data_revisao" value="${c.data_revisao}"></div><div class="field actions selfend"><button class="btn sm">Salvar</button><button type="button" class="btn alt sm" data-act="cancel-caso">Cancelar</button></div></form>`
-      : `<div class="actions between"><div><b>${esc(c.cliente_nome)}</b> · ${fmtTel(c.telefone)}<div class="muted small">Revisão em ${fmtData(c.data_revisao)} · ${esc(c.loja)} · criado em ${fmtHora(c.criado_em)}</div></div><button class="btn alt sm" data-act="edit-caso">Editar dados</button></div>`;
+      : `<div class="actions between"><div><b>${esc(c.cliente_nome)}</b> · ${fmtTel(c.telefone)}<div class="muted small">Revisão em ${fmtData(c.data_revisao)} · ${esc(c.loja)} · criado em ${fmtHora(c.criado_em)}</div></div><div class="actions"><button class="btn alt sm" data-act="edit-caso">Editar dados</button>${S.me.perfil === 'gestor_kinto' ? '<button class="btn danger sm" data-act="excluir-caso">Excluir caso</button>' : ''}</div></div>`;
     const lin = d.contatos.map((t) => {
       if (editando === t.id) {
         return `<div class="it"><form data-f="contato" data-id="${t.id}"><div class="row"><div class="field"><label>Etapa</label><select name="etapa">${opts(S.cfg.etapas, t.etapa)}</select></div>
@@ -507,6 +507,20 @@ async function abreCaso(id) {
     if (act === 'cancel-edit') { editando = null; render(); }
     if (act === 'edit-caso') { editCaso = true; render(); }
     if (act === 'cancel-caso') { editCaso = false; render(); }
+    if (act === 'excluir-caso') {
+      const x = modal('Excluir caso #' + id, `<p>Excluir definitivamente o caso de <b>${esc(d.caso.cliente_nome)}</b>, com ${d.contatos.length} contato(s)${d.reserva ? ', a reserva' : ''}${d.atendimento ? ' e o atendimento' : ''}? Ele sai da fila e de todos os indicadores.</p>
+        <p class="muted small">Uma cópia fica na aba Auditoria e o sistema faz um backup antes de excluir.</p>
+        <div class="field"><label for="exc-cf">Digite <b>EXCLUIR</b> para confirmar</label><input id="exc-cf" autocomplete="off"></div><div class="err" id="exc-err"></div>
+        <div class="actions"><button class="btn danger" id="exc-ok" disabled>Excluir caso</button><button class="btn alt" id="exc-no">Cancelar</button></div>`);
+      const inp = $('#exc-cf', x.el), ok = $('#exc-ok', x.el);
+      inp.addEventListener('input', () => { ok.disabled = inp.value.trim().toUpperCase() !== 'EXCLUIR'; });
+      $('#exc-no', x.el).addEventListener('click', x.close);
+      ok.addEventListener('click', async () => {
+        ok.disabled = true;
+        try { await api('/casos/' + id, { method: 'DELETE', body: { confirmo: 'EXCLUIR' } }); x.close(); m.close(); toast('Caso excluído', 'ok'); carregaCasos(); }
+        catch (er) { $('#exc-err', x.el).textContent = er.message; ok.disabled = false; }
+      });
+    }
     if (act === 'del' && confirm('Inativar este contato? Ele deixa de contar nos indicadores e a ação fica na auditoria.')) await salvar(() => api('/contatos/' + a.dataset.id, { method: 'DELETE' }));
   });
   m.el.addEventListener('submit', async (e) => {

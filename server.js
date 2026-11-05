@@ -487,6 +487,29 @@ function detalheCaso(id) {
 }
 app.get('/api/casos/:id', auth, gestor, wrap((req, res) => res.json(detalheCaso(Number(req.params.id)))));
 
+// Exclusão definitiva de um caso (somente administrador). Guarda uma cópia completa na auditoria e faz backup antes.
+app.delete('/api/casos/:id', auth, admin, wrap((req, res) => {
+  const id = Number(req.params.id);
+  const d = (() => { try { return detalheCaso(id); } catch { return null; } })();
+  if (!d) throw new HttpError(404, 'Caso não encontrado');
+  if (String(req.body && req.body.confirmo || '').trim().toUpperCase() !== 'EXCLUIR') throw bad('Confirmação ausente');
+  const copia = {
+    caso: d.caso, reserva: d.reserva, atendimento: d.atendimento,
+    contatos: db.prepare('SELECT * FROM contatos WHERE caso_id = ?').all(id),
+  };
+  let bkNome = null;
+  try { bkNome = backupAgora('manual').nome; } catch (e) { log('Falha no backup antes de excluir caso: ' + e.message); }
+  db.transaction(() => {
+    db.prepare('DELETE FROM contatos WHERE caso_id = ?').run(id);
+    db.prepare('DELETE FROM reservas WHERE caso_id = ?').run(id);
+    db.prepare('DELETE FROM atendimentos WHERE caso_id = ?').run(id);
+    db.prepare('DELETE FROM casos WHERE id = ?').run(id);
+    auditar(req.user.id, 'caso', id, 'exclusao', copia, null);
+  })();
+  avisa(d.caso.loja_id);
+  res.json({ ok: true, backup: bkNome });
+}));
+
 app.put('/api/casos/:id', auth, gestor, wrap((req, res) => {
   const id = Number(req.params.id);
   const antes = db.prepare('SELECT * FROM casos WHERE id = ?').get(id);

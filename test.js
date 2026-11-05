@@ -459,6 +459,23 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
     assert.ok(rel.includes('Locações concluídas — aceitaram no Agendamento;') && rel.includes('aceitaram na Confirmação;'));
   });
+  await t('excluir caso: só administrador, exige confirmação, apaga tudo do caso, audita e faz backup', async () => {
+    const r = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Caso Excluir', telefone: '62 94444-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
+    assert.strictEqual(r.status, 201);
+    const id = (await call(gest, 'GET', '/api/casos?q=Caso%20Excluir')).data[0].id;
+    assert.strictEqual((await call(colab, 'DELETE', '/api/casos/' + id, { confirmo: 'EXCLUIR' })).status, 403, 'colaborador não exclui');
+    assert.strictEqual((await call(gest, 'DELETE', '/api/casos/' + id, { confirmo: 'EXCLUIR' })).status, 403, 'gestor de loja não exclui');
+    assert.strictEqual((await call(adm, 'DELETE', '/api/casos/' + id, {})).status, 400, 'sem confirmação');
+    assert.strictEqual((await call(gest, 'GET', '/api/casos/' + id)).status, 200, 'continua existindo');
+    const r2 = await call(adm, 'DELETE', '/api/casos/' + id, { confirmo: 'EXCLUIR' });
+    assert.strictEqual(r2.status, 200); assert.ok(r2.data.backup, 'backup antes de excluir');
+    assert.strictEqual((await call(gest, 'GET', '/api/casos/' + id)).status, 404, 'caso removido');
+    const { db } = require('./db');
+    for (const tb of ['contatos', 'reservas', 'atendimentos']) assert.strictEqual(db.prepare(`SELECT COUNT(*) n FROM ${tb} WHERE caso_id = ?`).get(id).n, 0, tb);
+    const aud = db.prepare("SELECT antes FROM auditoria WHERE entidade='caso' AND entidade_id=? AND acao='exclusao'").get(id);
+    assert.ok(aud && JSON.parse(aud.antes).contatos.length === 1, 'cópia na auditoria');
+    assert.strictEqual((await call(adm, 'DELETE', '/api/casos/' + id, { confirmo: 'EXCLUIR' })).status, 404, 'já excluído');
+  });
   await t('backup: manual, listagem, download e permissão', async () => {
     assert.strictEqual((await call(colab, 'POST', '/api/admin/backups')).status, 403);
     assert.strictEqual((await call(gest, 'GET', '/api/admin/banco')).status, 403);
