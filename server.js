@@ -62,12 +62,20 @@ function lerCookie(h = '') {
   for (const p of h.split(';')) { const i = p.indexOf('='); if (i > 0) o[p.slice(0, i).trim()] = decodeURIComponent(p.slice(i + 1).trim()); }
   return o;
 }
+// Lojas que um consultor KINTO atende: a principal (usuarios.loja_id) e as adicionais (usuario_lojas).
+function lojasDe(u) {
+  if (!u.loja_id) return [];
+  const extras = db.prepare('SELECT ul.loja_id FROM usuario_lojas ul JOIN lojas l ON l.id = ul.loja_id WHERE ul.usuario_id = ? AND l.ativo = 1').all(u.id).map((r) => r.loja_id);
+  return [...new Set([u.loja_id, ...extras])];
+}
+const atendeLoja = (u, lojaId) => lojaId != null && (u.lojas_ids || [u.loja_id]).includes(lojaId);
 function auth(req, res, next) {
   const tok = lerCookie(req.headers.cookie).sid;
   if (!tok) return next(new HttpError(401, 'Não autenticado'));
   const u = db.prepare(`SELECT u.*, s.expira_em, l.nome AS loja_nome FROM sessoes s JOIN usuarios u ON u.id = s.usuario_id
     LEFT JOIN lojas l ON l.id = u.loja_id WHERE s.token_hash = ?`).get(sha(tok));
   if (!u || u.expira_em < Date.now() || !u.ativo) return next(new HttpError(401, 'Sessão expirada'));
+  u.lojas_ids = lojasDe(u);
   req.user = u;
   next();
 }
@@ -78,7 +86,11 @@ const consultor = exige('kinto');
 const filaAcesso = exige('kinto', 'gestor_loja', 'gestor_kinto');
 const registra = exige('colaborador', 'gestor_loja', 'gestor_kinto'); // consultor KINTO não registra contatos
 const ehGestor = (u) => u.perfil === 'gestor_loja' || u.perfil === 'gestor_kinto';
-const publico = (u) => ({ id: u.id, nome: u.nome, email: u.email, perfil: u.perfil, loja_id: u.loja_id, loja_nome: u.loja_nome || null });
+const publico = (u) => {
+  const ids = u.lojas_ids || lojasDe(u);
+  const nomes = ids.length ? db.prepare(`SELECT nome FROM lojas WHERE id IN (${ids.map(() => '?').join(',')}) ORDER BY nome`).all(...ids).map((r) => r.nome) : [];
+  return { id: u.id, nome: u.nome, email: u.email, perfil: u.perfil, loja_id: u.loja_id, loja_nome: nomes.length > 1 ? nomes.join(' + ') : (u.loja_nome || nomes[0] || null), lojas_ids: ids };
+};
 
 const tentativas = new Map(); // limitação de tentativas de login: por IP+e-mail (8) e por IP (40) em 15 min
 const JANELA = 15 * 60 * 1000;
@@ -107,7 +119,7 @@ app.post('/api/login', wrap((req, res) => {
   db.prepare('INSERT INTO sessoes (token_hash, usuario_id, expira_em) VALUES (?,?,?)').run(sha(tok), u.id, Date.now() + SESSAO_MS);
   res.cookie('sid', tok, { httpOnly: true, sameSite: 'strict', secure: COOKIE_SECURE, maxAge: SESSAO_MS, path: '/' });
   const loja = u.loja_id ? db.prepare('SELECT nome FROM lojas WHERE id = ?').get(u.loja_id) : null;
-  res.json(publico({ ...u, loja_nome: loja && loja.nome }));
+  res.json(publico({ ...u, loja_nome: loja && loja.nome, lojas_ids: lojasDe(u) }));
 }));
 
 app.post('/api/logout', (req, res) => {
@@ -134,10 +146,10 @@ app.get('/api/config', auth, (req, res) => {
   const u = req.user;
   const motivos = db.prepare('SELECT id, resultado, descricao, exige_obs FROM motivos WHERE ativo = 1 ORDER BY resultado, ordem, id').all();
   const lojas = u.perfil === 'kinto'
-    ? db.prepare('SELECT id, nome FROM lojas WHERE id = ?').all(u.loja_id)
+    ? db.prepare(`SELECT id, nome FROM lojas WHERE id IN (${(u.lojas_ids.length ? u.lojas_ids : [0]).map(() => '?').join(',')}) ORDER BY nome`).all(...u.lojas_ids)
     : db.prepare('SELECT id, nome FROM lojas WHERE ativo = 1 ORDER BY nome').all();
   const colaboradores = ehGestor(u) ? db.prepare("SELECT id, nome, loja_id FROM usuarios WHERE perfil = 'colaborador' AND ativo = 1 ORDER BY nome").all() : [];
-  const consultores = ehGestor(u) ? db.prepare("SELECT id, nome, loja_id FROM usuarios WHERE perfil = 'kinto' AND ativo = 1 ORDER BY nome").all() : [];
+  const consultores = ehGestor(u) ? db.prepare("SELECT id, nome, loja_id FROM usuarios WHERE perfil = 'kinto' AND ativo = 1 ORDER BY nome").all().map((c) => ({ ...c, lojas_ids: lojasDe(c) })) : [];
   res.json({
     etapas: D.ETAPAS, resultados: D.RESULTADOS, motivos, lojas, colaboradores, consultores,
     status_reserva: D.STATUS_RESERVA, motivos_nao_conclusao: D.MOTIVOS_NAO_CONCLUSAO,
@@ -167,7 +179,7 @@ function validaMotivo(resultado, motivoId, observacao) {
 // ---------- tempo real (SSE) ----------
 // Cada conexão guarda o usuário. Consultor KINTO só recebe eventos da própria loja.
 const clientes = new Set();
-const vale = (u, lojaId) => u.perfil === 'kinto' ? (lojaId != null && u.loja_id === lojaId) : ehGestor(u);
+const vale = (u, lojaId) => u.perfil === 'kinto' ? atendeLoja(u, lojaId) : ehGestor(u);
 const SSE_OK = 'update';
 let timerAviso = null; const lojasPend = new Set(); let todasPend = false;
 function avisa(lojaId = null) {
@@ -177,7 +189,7 @@ function avisa(lojaId = null) {
     timerAviso = null;
     for (const c of clientes) {
       const u = c.user;
-      const alvo = u.perfil === 'kinto' ? (todasPend || lojasPend.has(u.loja_id)) : true;
+      const alvo = u.perfil === 'kinto' ? (todasPend || (u.lojas_ids || []).some((x) => lojasPend.has(x))) : true;
       if (alvo) c.res.write(`event: ${SSE_OK}\ndata: {}\n\n`);
     }
     lojasPend.clear(); todasPend = false;
@@ -190,7 +202,7 @@ function novoAceite(casoId) {
   if (db.prepare('SELECT 1 FROM atendimentos WHERE caso_id = ?').get(casoId) || db.prepare('SELECT 1 FROM reservas WHERE caso_id = ?').get(casoId)) return;
   const e = estadoFila(casoId);
   const msg = `event: aceite\ndata: ${JSON.stringify({ caso_id: c.id, nome: c.cliente_nome, loja: c.loja, origem: e.aceitou ? 'Aceitou' : 'Ainda não decidiu' })}\n\n`;
-  for (const cl of clientes) if (cl.user.perfil === 'kinto' && cl.user.loja_id === c.loja_id) cl.res.write(msg);
+  for (const cl of clientes) if (cl.user.perfil === 'kinto' && atendeLoja(cl.user, c.loja_id)) cl.res.write(msg);
 }
 app.get('/api/stream', auth, filaAcesso, (req, res) => {
   res.set({ 'Content-Type': 'text/event-stream', 'Cache-Control': 'no-cache', Connection: 'keep-alive', 'X-Accel-Buffering': 'no' });
@@ -597,8 +609,12 @@ app.put('/api/casos/:id/reserva', auth, gestor, wrap((req, res) => {
 function situacao(r) { return r.reserva_status || (r.atendente_id ? 'Em atendimento' : 'Aguardando'); }
 function listaFila(user, q) {
   const w = [`(${paraKinto('c')} OR a.id IS NOT NULL OR r.id IS NOT NULL)`, '(r.id IS NULL OR c.data_local >= ?)']; const p = [addDays(hoje(), -7)];
-  if (user.perfil === 'kinto') { w.push('c.loja_id = ?'); p.push(user.loja_id); }
-  else if (Number(q.loja)) { w.push('c.loja_id = ?'); p.push(Number(q.loja)); }
+  if (user.perfil === 'kinto') {
+    // só as lojas dele; se escolheu uma delas no filtro, apenas essa
+    const escolhida = Number(q.loja);
+    const ids = escolhida && atendeLoja(user, escolhida) ? [escolhida] : (user.lojas_ids.length ? user.lojas_ids : [0]);
+    w.push(`c.loja_id IN (${ids.map(() => '?').join(',')})`); p.push(...ids);
+  } else if (Number(q.loja)) { w.push('c.loja_id = ?'); p.push(Number(q.loja)); }
   // contato que colocou o cliente na fila: o último "Aceitou"; se nunca aceitou, o último "Ainda não decidiu"
   const ult = (campo, juncao = '') => `(SELECT ${campo} FROM contatos x ${juncao} WHERE x.caso_id = c.id AND x.ativo = 1 AND x.resultado IN ('Aceitou','Ainda não decidiu') ORDER BY (x.resultado = 'Aceitou') DESC, x.id DESC LIMIT 1)`;
   const rows = db.prepare(`SELECT c.id, c.cliente_nome, c.telefone, c.data_revisao, c.loja_id, l.nome AS loja, ${ACEITE_EM} AS aceito_em,
@@ -617,7 +633,7 @@ function fichaFila(id, user) {
     LEFT JOIN lojas l ON l.id = c.loja_id LEFT JOIN atendimentos a ON a.caso_id = c.id LEFT JOIN reservas r ON r.caso_id = c.id
     WHERE c.id = ? AND (${paraKinto('c')} OR a.id IS NOT NULL OR r.id IS NOT NULL)`).get(id);
   // 404 (e não 403) para outra loja: o consultor nem fica sabendo que o cliente existe
-  if (!c || (user.perfil === 'kinto' && c.loja_id !== user.loja_id)) throw new HttpError(404, 'Cliente não encontrado');
+  if (!c || (user.perfil === 'kinto' && !atendeLoja(user, c.loja_id))) throw new HttpError(404, 'Cliente não encontrado');
   const aceite = db.prepare(`SELECT t.resultado AS origem, t.criado_em, t.observacao, m.descricao AS motivo, u.nome AS registrado_por FROM contatos t
     JOIN motivos m ON m.id = t.motivo_id JOIN usuarios u ON u.id = t.usuario_id
     WHERE t.caso_id = ? AND t.ativo = 1 AND t.resultado IN ('Aceitou','Ainda não decidiu') ORDER BY (t.resultado = 'Aceitou') DESC, t.id DESC LIMIT 1`).get(id) || {};
@@ -663,11 +679,11 @@ app.post('/api/fila/:id/reatribuir', auth, gestor, wrap((req, res) => {
   const id = Number(req.params.id);
   const ficha = fichaFila(id, req.user);
   const novo = db.prepare("SELECT * FROM usuarios WHERE id = ? AND perfil = 'kinto' AND ativo = 1").get(Number(req.body.usuario_id));
-  if (!novo || novo.loja_id !== ficha.caso.loja_id) throw bad('Escolha um consultor KINTO ativo da loja do cliente');
+  if (!novo || !atendeLoja({ ...novo, lojas_ids: lojasDe(novo) }, ficha.caso.loja_id)) throw bad('Escolha um consultor KINTO ativo da loja do cliente');
   if (ficha.reserva) throw new HttpError(409, 'Este cliente já foi finalizado');
   const antes = ficha.atendimento;
   db.prepare(`INSERT INTO atendimentos (caso_id, usuario_id, loja_id, assumido_em) VALUES (?,?,?,?)
-    ON CONFLICT(caso_id) DO UPDATE SET usuario_id = excluded.usuario_id, assumido_em = excluded.assumido_em`).run(id, novo.id, novo.loja_id, nowBR());
+    ON CONFLICT(caso_id) DO UPDATE SET usuario_id = excluded.usuario_id, assumido_em = excluded.assumido_em`).run(id, novo.id, ficha.caso.loja_id, nowBR());
   auditar(req.user.id, 'atendimento', id, 'reatribuir', antes, { usuario_id: novo.id });
   avisa(ficha.caso.loja_id);
   res.json(fichaFila(id, req.user));
@@ -791,6 +807,17 @@ const lojaOuNulo = (v) => {
   if (!db.prepare('SELECT 1 FROM lojas WHERE id = ?').get(id)) throw bad('Loja inválida');
   return id;
 };
+// Lojas adicionais (só vale para consultor KINTO): lista de ids válidos, sem repetir a principal.
+const lojasExtras = (perfil, v, principal) => {
+  if (perfil !== 'kinto') return [];
+  const ids = [...new Set((Array.isArray(v) ? v : []).map(Number).filter(Boolean))].filter((x) => x !== principal);
+  for (const x of ids) if (!db.prepare('SELECT 1 FROM lojas WHERE id = ? AND ativo = 1').get(x)) throw bad('Loja adicional inválida');
+  return ids;
+};
+const gravaExtras = (uid, ids) => {
+  db.prepare('DELETE FROM usuario_lojas WHERE usuario_id = ?').run(uid);
+  for (const x of ids) db.prepare('INSERT INTO usuario_lojas (usuario_id, loja_id) VALUES (?,?)').run(uid, x);
+};
 const exigeLoja = (perfil, loja) => { if (perfil === 'kinto' && !loja) throw bad('Consultor KINTO precisa de uma loja'); };
 const emailOuNulo = (v) => {
   const e = txt(v, 120).toLowerCase();
@@ -799,7 +826,12 @@ const emailOuNulo = (v) => {
   return e;
 };
 app.get('/api/usuarios', auth, admin, (req, res) => {
-  res.json(db.prepare(`SELECT u.id, u.nome, u.email, u.perfil, u.loja_id, l.nome AS loja, u.ativo FROM usuarios u LEFT JOIN lojas l ON l.id = u.loja_id ORDER BY u.ativo DESC, u.nome`).all());
+  const rows = db.prepare(`SELECT u.id, u.nome, u.email, u.perfil, u.loja_id, l.nome AS loja, u.ativo FROM usuarios u LEFT JOIN lojas l ON l.id = u.loja_id ORDER BY u.ativo DESC, u.nome`).all();
+  const extras = db.prepare('SELECT ul.usuario_id, ul.loja_id, l.nome FROM usuario_lojas ul JOIN lojas l ON l.id = ul.loja_id ORDER BY l.nome').all();
+  res.json(rows.map((u) => {
+    const ex = extras.filter((e) => e.usuario_id === u.id && e.loja_id !== u.loja_id);
+    return { ...u, lojas_extras: ex.map((e) => e.loja_id), loja: ex.length ? [u.loja, ...ex.map((e) => e.nome)].join(' + ') : u.loja };
+  }));
 });
 app.post('/api/usuarios', auth, admin, wrap((req, res) => {
   const b = req.body || {};
@@ -811,8 +843,10 @@ app.post('/api/usuarios', auth, admin, wrap((req, res) => {
   const loja = lojaOuNulo(b.loja_id);
   exigeLoja(b.perfil, loja);
   if (db.prepare('SELECT 1 FROM usuarios WHERE email = ?').get(email)) throw bad('Já existe usuário com este e-mail');
+  const extras = lojasExtras(b.perfil, b.lojas_extras, loja);
   const r = db.prepare('INSERT INTO usuarios (nome, email, senha_hash, perfil, loja_id, criado_em) VALUES (?,?,?,?,?,?)').run(nome, email, hashSenha(senha), b.perfil, loja, nowBR());
-  auditar(req.user.id, 'usuario', Number(r.lastInsertRowid), 'criacao', null, { nome, email, perfil: b.perfil, loja_id: loja });
+  gravaExtras(Number(r.lastInsertRowid), extras);
+  auditar(req.user.id, 'usuario', Number(r.lastInsertRowid), 'criacao', null, { nome, email, perfil: b.perfil, loja_id: loja, lojas_extras: extras });
   res.status(201).json({ id: Number(r.lastInsertRowid) });
 }));
 app.put('/api/usuarios/:id', auth, admin, wrap((req, res) => {
@@ -826,10 +860,14 @@ app.put('/api/usuarios/:id', auth, admin, wrap((req, res) => {
   const loja = 'loja_id' in b ? lojaOuNulo(b.loja_id) : antes.loja_id;
   const ativo = 'ativo' in b ? (b.ativo ? 1 : 0) : antes.ativo;
   exigeLoja(perfil, loja);
+  const extrasAntes = db.prepare('SELECT loja_id FROM usuario_lojas WHERE usuario_id = ? ORDER BY loja_id').all(id).map((r) => r.loja_id);
+  const extras = 'lojas_extras' in b ? lojasExtras(perfil, b.lojas_extras, loja).sort((x, y) => x - y) : (perfil === 'kinto' ? extrasAntes.filter((x) => x !== loja) : []);
   if (id === req.user.id && (!ativo || perfil !== 'gestor_kinto')) throw bad('Você não pode desativar nem rebaixar o próprio usuário');
   db.prepare('UPDATE usuarios SET nome = ?, perfil = ?, loja_id = ?, ativo = ? WHERE id = ?').run(nome, perfil, loja, ativo, id);
-  if (!ativo || perfil !== antes.perfil || loja !== antes.loja_id) db.prepare('DELETE FROM sessoes WHERE usuario_id = ?').run(id);
-  auditar(req.user.id, 'usuario', id, 'edicao', antes, { nome, perfil, loja_id: loja, ativo });
+  gravaExtras(id, extras);
+  const mudouLojas = JSON.stringify(extras) !== JSON.stringify(extrasAntes.filter((x) => x !== antes.loja_id));
+  if (!ativo || perfil !== antes.perfil || loja !== antes.loja_id || mudouLojas) db.prepare('DELETE FROM sessoes WHERE usuario_id = ?').run(id);
+  auditar(req.user.id, 'usuario', id, 'edicao', { ...antes, lojas_extras: extrasAntes }, { nome, perfil, loja_id: loja, ativo, lojas_extras: extras });
   res.json({ ok: true });
 }));
 app.post('/api/usuarios/:id/senha', auth, admin, wrap((req, res) => {
@@ -859,8 +897,11 @@ app.put('/api/lojas/:id', auth, admin, wrap((req, res) => {
   const ativo = 'ativo' in req.body ? (req.body.ativo ? 1 : 0) : antes.ativo;
   const cidade = 'cidade' in req.body ? txt(req.body.cidade, 80) || null : antes.cidade;
   const email = 'email_alerta' in req.body ? emailOuNulo(req.body.email_alerta) : antes.email_alerta;
+  if (nome.length < 2) throw bad('Informe o nome da loja');
+  if (db.prepare('SELECT 1 FROM lojas WHERE nome = ? AND id <> ?').get(nome, id)) throw bad('Já existe loja com este nome');
   db.prepare('UPDATE lojas SET nome = ?, cidade = ?, ativo = ?, email_alerta = ? WHERE id = ?').run(nome, cidade, ativo, email, id);
   auditar(req.user.id, 'loja', id, 'edicao', antes, { nome, cidade, ativo, email_alerta: email });
+  avisa();
   res.json({ ok: true });
 }));
 

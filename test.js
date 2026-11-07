@@ -459,6 +459,41 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
     assert.ok(rel.includes('Locações concluídas — aceitaram no Agendamento;') && rel.includes('aceitaram na Confirmação;'));
   });
+  await t('consultor KINTO em duas lojas: vê as duas filas, filtra por loja e não vê uma terceira', async () => {
+    const k4 = jar('k4');
+    assert.strictEqual((await call(adm, 'POST', '/api/usuarios', { nome: 'Duplo', email: 'k4@kinto.com', senha: 'kinto-1234', perfil: 'kinto', loja_id: ANA(), lojas_extras: [GYN()] })).status, 201);
+    const lg = await call(k4, 'POST', '/api/login', { email: 'k4@kinto.com', senha: 'kinto-1234' });
+    assert.strictEqual(lg.data.lojas_ids.length, 2);
+    const c4 = (await call(k4, 'GET', '/api/config')).data;
+    assert.deepStrictEqual(c4.lojas.map((l) => l.id).sort(), [ANA(), GYN()].sort(), 'config traz as duas lojas');
+    const all = (await call(k4, 'GET', '/api/fila')).data.itens;
+    assert.ok(all.some((x) => x.loja_id === ANA()) && all.some((x) => x.loja_id === GYN()), 'fila das duas lojas');
+    const so = (await call(k4, 'GET', '/api/fila?loja=' + GYN())).data.itens;
+    assert.ok(so.length && so.every((x) => x.loja_id === GYN()), 'filtro por loja');
+    // terceira loja: invisível
+    const nl = await call(adm, 'POST', '/api/lojas', { nome: 'Terceira', cidade: 'X' }); assert.strictEqual(nl.status, 201);
+    const L3 = (await call(adm, 'GET', '/api/lojas')).data.find((l) => l.nome === 'Terceira').id;
+    const rg = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: L3, cliente_nome: 'Cliente Terceira', telefone: '62 93333-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
+    assert.strictEqual(rg.status, 201);
+    const f3 = (await call(k4, 'GET', '/api/fila?loja=' + L3)).data.itens;
+    assert.ok(f3.every((x) => x.loja_id !== L3), 'loja que ele não atende não aparece, nem pelo filtro');
+    const id3 = (await call(gest, 'GET', '/api/casos?q=Cliente%20Terceira')).data[0].id;
+    assert.strictEqual((await call(k4, 'GET', '/api/fila/' + id3)).status, 404);
+    assert.strictEqual((await call(k4, 'POST', `/api/fila/${id3}/assumir`)).status, 404);
+    // tirar a segunda loja: a lista volta a ter só a principal
+    const uid = (await call(adm, 'GET', '/api/usuarios')).data.find((u) => u.email === 'k4@kinto.com').id;
+    assert.strictEqual((await call(adm, 'PUT', '/api/usuarios/' + uid, { lojas_extras: [] })).status, 200);
+    await call(k4, 'POST', '/api/login', { email: 'k4@kinto.com', senha: 'kinto-1234' });
+    assert.ok((await call(k4, 'GET', '/api/fila')).data.itens.every((x) => x.loja_id === ANA()), 'só a principal');
+  });
+  await t('editar loja: nome e cidade, sem duplicar nome', async () => {
+    const ls = (await call(adm, 'GET', '/api/lojas')).data; const l = ls.find((x) => x.nome === 'Terceira');
+    assert.strictEqual((await call(adm, 'PUT', '/api/lojas/' + l.id, { nome: 'Goiânia', cidade: 'Y' })).status, 400, 'nome repetido');
+    assert.strictEqual((await call(adm, 'PUT', '/api/lojas/' + l.id, { nome: 'Terceira Renomeada', cidade: 'Rio Verde/GO' })).status, 200);
+    const n = (await call(adm, 'GET', '/api/lojas')).data.find((x) => x.id === l.id);
+    assert.strictEqual(n.nome, 'Terceira Renomeada'); assert.strictEqual(n.cidade, 'Rio Verde/GO');
+    assert.strictEqual((await call(gest, 'PUT', '/api/lojas/' + l.id, { nome: 'Z' })).status, 403);
+  });
   await t('excluir caso: só administrador, exige confirmação, apaga tudo do caso, audita e faz backup', async () => {
     const r = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Caso Excluir', telefone: '62 94444-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
     assert.strictEqual(r.status, 201);

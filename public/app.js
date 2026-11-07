@@ -366,11 +366,13 @@ function ligaReserva(root) {
 /* ---------------- atendimento KINTO (fila de clientes que aceitaram) ---------------- */
 function viewFila() {
   const gest = S.me.perfil !== 'kinto';
+  const multi = !gest && (S.me.lojas_ids || []).length > 1;
+  if (!multi && !gest) S.c.loja = '';
   $('#view').innerHTML = `<div class="page-head"><div><h1>Atendimento KINTO Share</h1>
-    <div class="live"><span class="dot" id="livedot"></span><span id="livetxt">Conectando…</span>${gest ? '' : ` · <span>Loja ${esc(S.me.loja_nome)}</span>`}</div></div></div>
-    ${gest ? `<div class="filters card"><div class="f"><label>Loja</label><select id="fl">${opts(S.cfg.lojas, S.c.loja, 'Todas')}</select></div></div>` : ''}
+    <div class="live"><span class="dot" id="livedot"></span><span id="livetxt">Conectando…</span>${gest ? '' : ` · <span>${multi ? 'Lojas' : 'Loja'} ${esc(S.me.loja_nome)}</span>`}</div></div></div>
+    ${gest || multi ? `<div class="filters card"><div class="f"><label>Loja</label><select id="fl">${opts(S.cfg.lojas, S.c.loja, 'Todas')}</select></div></div>` : ''}
     <div id="fbody"><div class="empty">Carregando…</div></div>`;
-  if (gest) $('#fl').addEventListener('change', (e) => { S.c.loja = e.target.value; carregaFila(); });
+  if (gest || multi) $('#fl').addEventListener('change', (e) => { S.c.loja = e.target.value; carregaFila(); });
   marcaLive();
   carregaFila();
 }
@@ -379,7 +381,7 @@ const fmtEspera = (m) => (m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m 
 async function carregaFila() {
   const box = $('#fbody'); if (!box) return;
   let f;
-  try { f = await api('/fila' + (S.me.perfil !== 'kinto' && S.c.loja ? '?loja=' + S.c.loja : '')); } catch (e) { return; }
+  try { f = await api('/fila' + (S.c.loja ? '?loja=' + S.c.loja : '')); } catch (e) { return; }
   S.fila = f; S.aguardando = f.itens.filter((x) => x.situacao === 'Aguardando').length;
   const c = $('#cnt'); if (c) { c.textContent = S.aguardando; c.classList.toggle('hidden', !S.aguardando); }
   const aguard = f.itens.filter((x) => x.situacao === 'Aguardando');
@@ -391,7 +393,7 @@ async function carregaFila() {
     const quente = x.situacao === 'Aguardando' && esp >= S.cfg.escalona_minutos;
     return `<div class="fcard${quente ? ' late' : ''}${meu(x) ? ' mine' : ''}" data-id="${x.id}">
       <div class="fc-top"><b>${esc(x.cliente_nome)}</b>${badge(x.situacao)}</div>
-      <div class="muted small">${S.me.perfil === 'kinto' ? '' : esc(x.loja) + ' · '}Revisão em ${fmtData(x.data_revisao)}</div>
+      <div class="muted small">${S.me.perfil === 'kinto' && (S.me.lojas_ids || []).length < 2 ? '' : esc(x.loja) + ' · '}Revisão em ${fmtData(x.data_revisao)}</div>
       <div class="small">${x.origem ? badge(x.origem) + ' ' : ''}${esc(x.motivo_aceite || '')}</div>
       <div class="muted small">${x.situacao === 'Aguardando' ? 'Aguardando há ' + fmtEspera(esp) : x.atendente ? 'Atendente: ' + esc(x.atendente) : ''}</div>
       ${x.situacao === 'Aguardando' ? `<button class="btn sm" data-take="${x.id}">Atender este cliente</button>` : `<button class="btn alt sm" data-open="${x.id}">Abrir</button>`}</div>`;
@@ -612,14 +614,18 @@ async function adminUsuarios() {
     <div class="field"><label>E-mail</label><input type="email" name="email" value="${esc(u?.email || '')}" ${u ? 'disabled' : 'required'}></div></div>
     <div class="row"><div class="field"><label>Perfil</label><select name="perfil">${opts(Object.keys(PERFIL).map((k) => ({ id: k, nome: PERFIL[k] })), u?.perfil || 'colaborador')}</select></div>
     <div class="field"><label>Loja <span class="opt">(obrigatória para Consultor KINTO)</span></label><select name="loja_id">${opts(lojas.filter((l) => l.ativo).map((l) => ({ id: l.id, nome: l.nome })), u?.loja_id, 'Sem loja')}</select></div></div>
+    <div class="field" id="fx"><label>Segunda loja <span class="opt">(opcional — só para Consultor KINTO que atende duas lojas)</span></label><select name="loja_extra">${opts(lojas.filter((l) => l.ativo).map((l) => ({ id: l.id, nome: l.nome })), (u?.lojas_extras || [])[0], 'Nenhuma')}</select></div>
     ${u ? `<div class="field"><label>Situação</label><select name="ativo"><option value="1"${u.ativo ? ' selected' : ''}>Ativo</option><option value="0"${u.ativo ? '' : ' selected'}>Inativo</option></select></div>`
       : '<div class="field"><label>Senha inicial (mínimo 8 caracteres)</label><input type="text" name="senha" minlength="8" required autocomplete="off"></div>'}
     <div class="err" id="uerr"></div><button class="btn">Salvar</button></form>`;
   const abre = (u) => {
     const m = modal(u ? 'Editar usuário' : 'Novo usuário', form(u));
+    const alterna = () => { $('#fx', m.el).classList.toggle('hidden', $('#uf', m.el).perfil.value !== 'kinto'); };
+    $('#uf', m.el).perfil.addEventListener('change', alterna); alterna();
     $('#uf', m.el).addEventListener('submit', async (e) => {
       e.preventDefault();
       const v = Object.fromEntries(new FormData(e.target));
+      v.lojas_extras = v.loja_extra && v.perfil === 'kinto' ? [Number(v.loja_extra)] : []; delete v.loja_extra;
       try {
         if (u) { v.ativo = v.ativo === '1'; await api('/usuarios/' + u.id, { method: 'PUT', body: v }); } else await api('/usuarios', { method: 'POST', body: v });
         m.close(); toast('Salvo ✓', 'ok'); adminUsuarios(); api('/config').then((c) => { S.cfg = c; });
@@ -638,9 +644,20 @@ async function adminLojas() {
   box.innerHTML = `<div class="card"><h2>Lojas</h2><p class="muted small">O e-mail de alerta recebe o aviso quando um cliente que aceitou fica sem atendimento por ${S.cfg.escalona_minutos} minutos em horário comercial (use a caixa compartilhada do time KINTO da loja).</p>
     ${ls.map((l) => `<form class="lojaf${l.ativo ? '' : ' off'}" data-l="${l.id}"><div class="lj-nome"><b>${esc(l.nome)}</b> <span class="muted small">${esc(l.cidade || '')}</span></div>
       <input type="email" name="email_alerta" value="${esc(l.email_alerta || '')}" placeholder="E-mail de alerta da equipe KINTO" aria-label="E-mail de alerta de ${esc(l.nome)}">
-      <button class="btn alt sm">Salvar e-mail</button><button type="button" class="btn alt sm" data-t="${l.id}" data-a="${l.ativo ? 0 : 1}">${l.ativo ? 'Desativar' : 'Reativar'}</button></form>`).join('')}
+      <button class="btn alt sm">Salvar e-mail</button><button type="button" class="btn alt sm" data-ed="${l.id}">Editar</button><button type="button" class="btn alt sm" data-t="${l.id}" data-a="${l.ativo ? 0 : 1}">${l.ativo ? 'Desativar' : 'Reativar'}</button></form>`).join('')}
     <form id="lf2" class="row sec"><div class="field"><label>Nova loja</label><input name="nome" required></div><div class="field"><label>Cidade/UF</label><input name="cidade"></div><div class="field"><button class="btn">Adicionar</button></div></form><div class="err" id="lerr2"></div></div>`;
   const recarrega = () => { adminLojas(); api('/config').then((c) => { S.cfg = c; }); };
+  $$('[data-ed]', box).forEach((b) => b.addEventListener('click', () => {
+    const l = ls.find((x) => x.id === Number(b.dataset.ed));
+    const m = modal('Editar loja', `<form id="ef"><div class="row"><div class="field"><label>Nome da loja</label><input name="nome" value="${esc(l.nome)}" required maxlength="80"></div>
+      <div class="field"><label>Cidade/UF</label><input name="cidade" value="${esc(l.cidade || '')}" maxlength="80"></div></div><div class="err" id="eerr"></div><div class="actions"><button class="btn">Salvar</button><button type="button" class="btn alt" id="eno">Cancelar</button></div></form>`);
+    $('#eno', m.el).addEventListener('click', m.close);
+    $('#ef', m.el).addEventListener('submit', async (e) => {
+      e.preventDefault();
+      try { await api('/lojas/' + l.id, { method: 'PUT', body: { nome: e.target.nome.value, cidade: e.target.cidade.value } }); m.close(); toast('Loja atualizada ✓', 'ok'); recarrega(); }
+      catch (err) { $('#eerr', m.el).textContent = err.message; }
+    });
+  }));
   $$('[data-t]', box).forEach((b) => b.addEventListener('click', async () => { await api('/lojas/' + b.dataset.t, { method: 'PUT', body: { ativo: Number(b.dataset.a) } }); recarrega(); }));
   $$('form[data-l]', box).forEach((f) => f.addEventListener('submit', async (e) => { e.preventDefault(); try { await api('/lojas/' + f.dataset.l, { method: 'PUT', body: { email_alerta: f.email_alerta.value } }); toast('Salvo ✓', 'ok'); } catch (err) { toast(err.message, 'err'); } }));
   $('#lf2').addEventListener('submit', async (e) => { e.preventDefault(); try { await api('/lojas', { method: 'POST', body: Object.fromEntries(new FormData(e.target)) }); recarrega(); } catch (err) { $('#lerr2').textContent = err.message; } });

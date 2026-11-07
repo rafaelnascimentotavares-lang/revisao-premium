@@ -71,6 +71,7 @@ function precisaAutomatico(pasta, agoraBR) {
 }
 
 // ---------- validação e restauração ----------
+const TABELAS_OPCIONAIS = ['usuario_lojas']; // podem faltar em backups antigos
 const TABELAS_DADOS = ['lojas', 'usuarios', 'motivos', 'casos', 'contatos', 'reservas', 'atendimentos', 'auditoria'];
 
 function colunas(conn, tabela, schema = 'main') {
@@ -121,11 +122,17 @@ function restaurar(conn, caminho) {
     try {
       conn.exec('DELETE FROM sessoes');
       // filhos primeiro ao apagar; pais primeiro ao inserir
+      for (const t of TABELAS_OPCIONAIS) conn.exec(`DELETE FROM main.${t}`);
       for (const t of [...TABELAS_DADOS].reverse()) conn.exec(`DELETE FROM main.${t}`);
       for (const t of TABELAS_DADOS) {
         const dest = colunas(conn, t), orig = colunas(conn, t, 'imp');
         const comuns = dest.filter((c) => orig.includes(c)).join(', ');
         conn.exec(`INSERT INTO main.${t} (${comuns}) SELECT ${comuns} FROM imp.${t}`);
+      }
+      for (const t of TABELAS_OPCIONAIS) {
+        const dest = colunas(conn, t), orig = colunas(conn, t, 'imp');
+        const comuns = dest.filter((c) => orig.includes(c)).join(', ');
+        if (comuns) conn.exec(`INSERT INTO main.${t} (${comuns}) SELECT ${comuns} FROM imp.${t}`);
       }
       const viol = conn.prepare('PRAGMA foreign_key_check').all();
       if (viol.length) throw new Error('Backup inconsistente (' + viol.length + ' vínculo(s) quebrado(s)); nada foi alterado.');

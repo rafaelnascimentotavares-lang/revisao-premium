@@ -108,6 +108,10 @@ CREATE TABLE IF NOT EXISTS usuarios (
   perfil TEXT NOT NULL,
   loja_id INTEGER REFERENCES lojas(id), ativo INTEGER NOT NULL DEFAULT 1, criado_em TEXT NOT NULL
 );
+-- Lojas adicionais de um consultor KINTO (além da loja principal em usuarios.loja_id). Uso temporário.
+CREATE TABLE IF NOT EXISTS usuario_lojas (
+  usuario_id INTEGER NOT NULL REFERENCES usuarios(id), loja_id INTEGER NOT NULL REFERENCES lojas(id), PRIMARY KEY (usuario_id, loja_id)
+);
 CREATE TABLE IF NOT EXISTS sessoes (
   token_hash TEXT PRIMARY KEY, usuario_id INTEGER NOT NULL REFERENCES usuarios(id), expira_em INTEGER NOT NULL
 );
@@ -146,9 +150,9 @@ CREATE TABLE IF NOT EXISTS auditoria (
 `);
 
 // ---------- versão do esquema e migrações ----------
-// v3 = reservas.criado_em (tempo do aceite até a reserva); v1 = modelo original; v2 = colunas email_alerta/escalado_em/motivo_nao_conclusao + índices extras + tabela meta.
-const SCHEMA_VERSAO = 3;
-const TABELAS = ['lojas', 'usuarios', 'sessoes', 'motivos', 'casos', 'contatos', 'reservas', 'atendimentos', 'auditoria'];
+// v4 = tabela usuario_lojas (consultor KINTO em mais de uma loja); v3 = reservas.criado_em (tempo do aceite até a reserva); v1 = modelo original; v2 = colunas email_alerta/escalado_em/motivo_nao_conclusao + índices extras + tabela meta.
+const SCHEMA_VERSAO = 4;
+const TABELAS = ['lojas', 'usuarios', 'usuario_lojas', 'sessoes', 'motivos', 'casos', 'contatos', 'reservas', 'atendimentos', 'auditoria'];
 function garanteColuna(tabela, coluna, def) {
   const cols = db.prepare(`PRAGMA table_info(${tabela})`).all().map((c) => c.name);
   if (!cols.includes(coluna)) db.exec(`ALTER TABLE ${tabela} ADD COLUMN ${coluna} ${def}`);

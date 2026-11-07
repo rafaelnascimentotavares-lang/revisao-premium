@@ -173,7 +173,7 @@ input.chk { width: auto; min-height: 0; }
 .hint.ok { background: var(--ok-bg); color: var(--ok); }
 select.inl { width: auto; min-width: 170px; }
 fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
-.lojaf { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(220px, 2fr) auto auto; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.lojaf { display: grid; grid-template-columns: minmax(140px, 1fr) minmax(220px, 2fr) auto auto auto; gap: 8px; align-items: center; padding: 10px 0; border-bottom: 1px solid var(--line); }
 .lojaf.off { opacity: .55; }
 @media (max-width: 720px) { .lojaf { grid-template-columns: 1fr; } .row { grid-template-columns: 1fr; } }
 
