@@ -587,6 +587,26 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.strictEqual(a2.enc_aguardando, a0.enc_aguardando); assert.strictEqual(a2.enc_em_atend, a0.enc_em_atend);
     assert.ok((await call(gest, 'GET', '/api/casos?filtro=aguardando')).data.some((c) => c.id === G), 'volta a Aguardando');
   });
+  await t('reabrir locação: volta a Em atendimento, guarda cópia na auditoria; só quem atendeu (ou gestor) reabre', async () => {
+    const pn = async () => (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data.totais;
+    assert.strictEqual((await call(k3, 'POST', `/api/fila/${G}/assumir`)).status, 200);
+    assert.strictEqual((await call(k3, 'PUT', `/api/fila/${G}/reserva`, { status: 'Concluída', diarias: 3 })).status, 200);
+    const a0 = await pn();
+    assert.strictEqual((await call(k1, 'POST', `/api/fila/${G}/reabrir`)).status, 404, 'outra loja');
+    assert.strictEqual((await call(k3, 'POST', `/api/fila/${G}/reabrir`)).status, 200);
+    const a1 = await pn();
+    assert.strictEqual(a1.concluidas, a0.concluidas - 1); assert.strictEqual(a1.enc_em_atend, a0.enc_em_atend + 1);
+    assert.strictEqual(a1.encaminhados, a0.encaminhados, 'total de encaminhados não muda');
+    assert.strictEqual((await call(k3, 'GET', '/api/fila')).data.itens.find((x) => x.id === G).situacao, 'Em atendimento');
+    assert.strictEqual((await call(k3, 'POST', `/api/fila/${G}/reabrir`)).status, 400, 'nada para reabrir');
+    const { db } = require('./db');
+    assert.ok(db.prepare("SELECT 1 FROM auditoria WHERE entidade = 'reserva' AND acao = 'reabrir' AND antes LIKE '%Conclu%'").get(), 'auditoria guarda a locação anterior');
+    // gestor reabre pela tela de Casos
+    assert.strictEqual((await call(k3, 'PUT', `/api/fila/${G}/reserva`, { status: 'Não concluída', motivo_nao_conclusao: 'Cliente desistiu' })).status, 200);
+    assert.strictEqual((await call(gest, 'POST', `/api/casos/${G}/reserva/reabrir`)).status, 200);
+    assert.strictEqual((await call(colab, 'POST', `/api/casos/${G}/reserva/reabrir`)).status, 403);
+    await call(k3, 'POST', `/api/fila/${G}/liberar`);
+  });
   await t('excluir caso: só administrador, exige confirmação, apaga tudo do caso, audita e faz backup', async () => {
     const r = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Caso Excluir', telefone: '62 94444-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
     assert.strictEqual(r.status, 201);

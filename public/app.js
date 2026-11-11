@@ -355,7 +355,7 @@ async function carregaPainel() {
 }
 
 /* ---------------- locação (usada na ficha da fila e no caso) ---------------- */
-function blocoReserva(rv0, atendimento, bloqueado = false) {
+function blocoReserva(rv0, atendimento, bloqueado = false, forcaReabrir = false) {
   const rv = rv0 || {};
   return `<div class="sec"><h3>Locação ${rv0 ? badge(rv.status) : ''}</h3>${atendimento ? `<div class="muted small mb">Atendido por ${esc(atendimento.nome)} desde ${fmtHora(atendimento.assumido_em)}</div>` : ''}
     <form data-f="reserva"><fieldset ${bloqueado ? 'disabled' : ''}><div class="row">
@@ -366,7 +366,8 @@ function blocoReserva(rv0, atendimento, bloqueado = false) {
         <div class="field"><label>Diárias <span class="opt">(obrigatória para "Alugou"; vazio = calcula pelas datas)</span></label><input type="number" min="0" name="diarias" value="${rv.diarias ?? ''}"></div></div>
       <div class="row"><div class="field"><label>Valor da diária (R$)</label><input type="number" step="0.01" min="0" name="valor_diaria" value="${Number(rv.valor_diaria ?? S.cfg.valor_diaria_padrao).toFixed(2)}"></div>
         <div class="field"><label>Total</label><input disabled value="${rv.valor_total != null ? brl(rv.valor_total) : 'calculado ao salvar'}"></div></div>
-      <div class="err" id="rerr"></div>${bloqueado ? '' : '<button class="btn">Salvar locação</button>'}</fieldset></form></div>`;
+      <div class="err" id="rerr"></div>${bloqueado ? '' : '<button class="btn">Salvar locação</button>'}</fieldset></form>
+    ${rv0 && !bloqueado && (atendimento || forcaReabrir) ? '<div class="actions mt"><button class="btn alt sm" type="button" data-act="reopen">Reabrir (voltar para Em atendimento)</button></div><p class="muted small">Desfaz o desfecho e o cliente volta para Em atendimento. A locação anterior fica guardada na Auditoria.</p>' : ''}</div>`;
 }
 function ligaReserva(root) {
   const sel = $('#rs', root), mn = $('#rmn', root); if (!sel) return;
@@ -439,13 +440,14 @@ async function abreFicha(id) {
         : `<div class="hint"><b>Quer falar com a KINTO</b> desde ${fmtHora(d.aceite.aceito_em)} · registrado por ${esc(d.aceite.registrado_por || '')}<br>Motivo: ${esc(d.aceite.motivo || '')}${d.aceite.observacao ? '<br>Obs.: ' + esc(d.aceite.observacao) : ''}</div>`}
       ${a ? `<div class="hint ok">Em atendimento por <b>${esc(a.nome)}</b> desde ${fmtHora(a.assumido_em)}</div>` : ''}
       <div class="actions between">${botoes}${reat}</div>
-      ${a || !kinto ? blocoReserva(d.reserva, null, !pode) : '<p class="muted small">Assuma o cliente para registrar a locação.</p>'}</div>`;
+      ${a || !kinto ? blocoReserva(d.reserva, null, !pode, true) : '<p class="muted small">Assuma o cliente para registrar a locação.</p>'}</div>`;
     ligaReserva(m.el);
   };
   const acao = async (fn, msg) => { try { d = await fn(); render(); toast(msg, 'ok'); carregaFila(); } catch (e) { toast(e.message, 'err'); } };
   m.el.addEventListener('click', (e) => {
     const a = e.target.closest('[data-act]'); if (!a) return;
     if (a.dataset.act === 'take') acao(() => api(`/fila/${id}/assumir`, { method: 'POST' }), 'Cliente é seu');
+    if (a.dataset.act === 'reopen' && confirm('Reabrir esta locação? O desfecho é desfeito e o cliente volta para Em atendimento.')) acao(() => api(`/fila/${id}/reabrir`, { method: 'POST' }), 'Locação reaberta: cliente em atendimento');
     if (a.dataset.act === 'release' && confirm('Devolver este cliente à fila para outro consultor atender?')) acao(() => api(`/fila/${id}/liberar`, { method: 'POST' }), 'Devolvido à fila');
   });
   m.el.addEventListener('submit', (e) => {
@@ -518,6 +520,7 @@ async function abreCaso(id) {
     const act = a.dataset.act;
     if (act === 'edit') { editando = Number(a.dataset.id); render(); }
     if (act === 'cancel-edit') { editando = null; render(); }
+    if (act === 'reopen' && confirm('Reabrir esta locação? O desfecho é desfeito e o cliente volta para Em atendimento.')) await salvar(() => api(`/casos/${id}/reserva/reabrir`, { method: 'POST' }));
     if (act === 'edit-caso') { editCaso = true; render(); }
     if (act === 'cancel-caso') { editCaso = false; render(); }
     if (act === 'excluir-caso') {

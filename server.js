@@ -622,6 +622,25 @@ function salvarReserva(userId, id, b) {
   const depois = db.prepare('SELECT * FROM reservas WHERE caso_id = ?').get(id);
   auditar(userId, 'reserva', depois.id, antes ? 'edicao' : 'criacao', antes, depois);
 }
+// Reabrir: desfaz o desfecho (Alugou / Não alugou) e o cliente volta a Em atendimento com o mesmo consultor. A cópia da locação fica na auditoria.
+function reabrirReserva(userId, id) {
+  const rv = db.prepare('SELECT * FROM reservas WHERE caso_id = ?').get(id);
+  if (!rv) throw bad('Este cliente não tem locação finalizada para reabrir');
+  const at = db.prepare('SELECT 1 FROM atendimentos WHERE caso_id = ?').get(id);
+  if (!at) throw bad('Este cliente não tem atendimento da KINTO. Edite a locação em vez de reabrir.');
+  db.transaction(() => {
+    db.prepare('DELETE FROM reservas WHERE caso_id = ?').run(id);
+    auditar(userId, 'reserva', rv.id, 'reabrir', rv, null);
+  })();
+}
+app.post('/api/casos/:id/reserva/reabrir', auth, gestor, wrap((req, res) => {
+  const id = Number(req.params.id);
+  const c = db.prepare('SELECT loja_id FROM casos WHERE id = ?').get(id);
+  if (!c) throw new HttpError(404, 'Caso não encontrado');
+  reabrirReserva(req.user.id, id);
+  avisa(c.loja_id);
+  res.json(detalheCaso(id));
+}));
 app.put('/api/casos/:id/reserva', auth, gestor, wrap((req, res) => {
   const id = Number(req.params.id);
   const c = db.prepare('SELECT loja_id FROM casos WHERE id = ?').get(id);
@@ -716,6 +735,14 @@ app.post('/api/fila/:id/reatribuir', auth, gestor, wrap((req, res) => {
   res.json(fichaFila(id, req.user));
 }));
 
+app.post('/api/fila/:id/reabrir', auth, filaAcesso, wrap((req, res) => {
+  const id = Number(req.params.id);
+  const ficha = fichaFila(id, req.user);
+  if (req.user.perfil === 'kinto' && (!ficha.atendimento || ficha.atendimento.usuario_id !== req.user.id)) throw new HttpError(403, 'Só quem atendeu o cliente pode reabrir a locação');
+  reabrirReserva(req.user.id, id);
+  avisa(ficha.caso.loja_id);
+  res.json(fichaFila(id, req.user));
+}));
 app.put('/api/fila/:id/reserva', auth, filaAcesso, wrap((req, res) => {
   const id = Number(req.params.id);
   const ficha = fichaFila(id, req.user);
