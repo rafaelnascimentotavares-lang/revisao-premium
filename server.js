@@ -312,10 +312,11 @@ function painel(q, { anterior = true } = {}) {
   const porCaso = new Map();
   for (const t of contatos) { if (!porCaso.has(t.caso_id)) porCaso.set(t.caso_id, []); porCaso.get(t.caso_id).push(t); }
   const resPorCaso = new Map(reservas.map((r) => [r.caso_id, r]));
+  const comAtend = new Set(db.prepare(`SELECT a.caso_id FROM atendimentos a JOIN casos c ON c.id = a.caso_id WHERE ${where}`).all(...params).map((r) => r.caso_id));
 
   const lojas = db.prepare('SELECT id, nome FROM lojas').all();
   const nomeLoja = new Map(lojas.map((l) => [l.id, l.nome]));
-  const zera = () => ({ concluidas_aceitos: 0, agendamentos: 0, contatados: 0, ofertados: 0, aceitaram: 0, recusaram: 0, indecisos: 0, recuperados: 0, resistentes: 0, concluidas: 0, nao_concluidas: 0, aceitos_sem_reserva: 0, encaminhados: 0, concluidas_enc: 0, enc_sem_reserva: 0 });
+  const zera = () => ({ concluidas_aceitos: 0, agendamentos: 0, contatados: 0, ofertados: 0, aceitaram: 0, recusaram: 0, indecisos: 0, recuperados: 0, resistentes: 0, concluidas: 0, nao_concluidas: 0, aceitos_sem_reserva: 0, encaminhados: 0, enc_ofertados: 0, enc_sem_registro: 0, concluidas_enc: 0, enc_sem_reserva: 0 });
   const tot = zera();
   const porLoja = new Map();
   const dias = new Map();
@@ -323,6 +324,7 @@ function painel(q, { anterior = true } = {}) {
 
   for (const c of casos) {
     const lista = porCaso.get(c.id) || [];
+    const rv0 = resPorCaso.get(c.id);
     const res = lista.map((t) => t.resultado);
     const f = {
       contatado: res.some((r) => r !== 'Não atendeu'),
@@ -336,8 +338,12 @@ function painel(q, { anterior = true } = {}) {
     f.resistiu = iNao >= 0;
     f.recuperado = iNao >= 0 && res.slice(iNao + 1).includes('Aceitou');
     // Encaminhado à KINTO = mesma regra da fila: aceitou em algum momento OU o último resultado é "Ainda não decidiu". Conta uma vez.
-    f.encaminhado = f.aceitou || res[res.length - 1] === 'Ainda não decidiu';
-    const rv = resPorCaso.get(c.id);
+    // Quem tem atendimento da KINTO ou locação registrada com certeza foi encaminhado (mesma regra de visibilidade da fila).
+    // Se isso acontece sem o contato "Quer falar" ativo (contato editado, inativado ou locação lançada direto), conta aqui e é sinalizado para revisão.
+    const quis = f.aceitou || res[res.length - 1] === 'Ainda não decidiu';
+    f.encaminhado = quis || !!rv0 || comAtend.has(c.id);
+    f.sem_registro = f.encaminhado && !quis;
+    const rv = rv0;
     const lj = porLoja.get(c.loja_id) || porLoja.set(c.loja_id, zera()).get(c.loja_id);
     for (const alvo of [tot, lj]) {
       alvo.agendamentos++;
@@ -352,6 +358,8 @@ function painel(q, { anterior = true } = {}) {
       if (rv && rv.status === 'Não concluída') alvo.nao_concluidas++;
       if (f.aceitou && !rv) alvo.aceitos_sem_reserva++;
       if (f.encaminhado) alvo.encaminhados++;
+      if (f.encaminhado && f.ofertado) alvo.enc_ofertados++;
+      if (f.sem_registro) alvo.enc_sem_registro++;
       if (f.encaminhado && !rv) alvo.enc_sem_reserva++;
       if (f.encaminhado && rv && rv.status === 'Concluída') alvo.concluidas_enc++;
     }
@@ -366,7 +374,7 @@ function painel(q, { anterior = true } = {}) {
 
   const taxas = (a) => ({
     oferta: pct(a.ofertados, a.agendamentos), aceite: pct(a.aceitaram, a.ofertados), recuperacao: pct(a.recuperados, a.resistentes),
-    aceite_reserva: pct(a.concluidas_aceitos, a.aceitaram), encaminhamento: pct(a.encaminhados, a.ofertados), encaminhado_locacao: pct(a.concluidas_enc, a.encaminhados), nao_conclusao: pct(a.nao_concluidas, a.concluidas + a.nao_concluidas), conversao_total: pct(a.concluidas, a.agendamentos),
+    aceite_reserva: pct(a.concluidas_aceitos, a.aceitaram), encaminhamento: pct(a.enc_ofertados, a.ofertados), encaminhado_locacao: pct(a.concluidas_enc, a.encaminhados), nao_conclusao: pct(a.nao_concluidas, a.concluidas + a.nao_concluidas), conversao_total: pct(a.concluidas, a.agendamentos),
   });
 
   const conta = (resultado) => {
@@ -492,6 +500,7 @@ function filtrosCasos(query) {
   if (isDate(query.de)) { w.push('c.data_local >= ?'); p.push(query.de); }
   if (isDate(query.ate)) { w.push('c.data_local <= ?'); p.push(query.ate); }
   if (Number(query.loja)) { w.push('c.loja_id = ?'); p.push(Number(query.loja)); }
+  if (query.filtro === 'sem_registro_encaminhamento') w.push(`(r.id IS NOT NULL OR a.id IS NOT NULL) AND NOT ${paraKinto('c')}`);
   if (query.filtro === 'encaminhados_sem_reserva') w.push(`r.id IS NULL AND ${paraKinto('c')}`);
   if (query.filtro === 'aceitos_sem_reserva') w.push(`r.id IS NULL AND ${temAceite('c')}`);
   if (query.filtro === 'com_reserva') w.push('r.id IS NOT NULL');
@@ -784,7 +793,7 @@ app.get('/api/export/painel.csv', auth, gestor, wrap((req, res) => {
   bloco('Relatório do painel | Revisão Premium', null, [['Período', `${brData(p.periodo.de)} a ${brData(p.periodo.ate)}`], ['Loja', lojaNome || 'Todas'], ['Colaborador', colabNome || 'Todos'], ['Gerado em', brHora(p.gerado_em)]]);
   bloco('Indicadores', ['Indicador', 'Valor'], [['Agendamentos', t.agendamentos], ['Contatados', t.contatados], ['Ofertados', t.ofertados], ['Encaminhados à KINTO (quiseram falar com a KINTO)', t.encaminhados], ['Não quiseram falar com a KINTO', t.recusaram],
     ['Recuperados na Confirmação (disseram não e depois quiseram falar)', t.recuperados], ['Registros antigos "Ainda não decidiu" (histórico)', t.indecisos], ['Alugaram', t.concluidas], ['Não alugaram (falaram com a KINTO e não alugaram)', t.nao_concluidas],
-    ['Encaminhados sem locação registrada', t.enc_sem_reserva], ['Diárias', t.diarias], ['Receita (R$)', brNum(t.receita)],
+    ['Encaminhados sem locação registrada', t.enc_sem_reserva], ['Encaminhados sem o registro "Quer falar com a KINTO" (revisar)', t.enc_sem_registro], ['Diárias', t.diarias], ['Receita (R$)', brNum(t.receita)],
     ['Alugaram — quis falar com a KINTO no Agendamento', t.locacoes_agendamento], ['Alugaram — quis falar com a KINTO na Confirmação', t.locacoes_confirmacao],
     ['Ticket médio por locação (R$)', brNum(t.ticket_medio)], ['Média de diárias por locação', num(t.media_diarias == null ? null : Math.round(t.media_diarias * 10) / 10)]]);
   bloco('Taxas', ['Taxa', 'Valor'], [['Taxa de oferta (ofertados / agendamentos)', brPct(r.oferta)], ['Taxa de encaminhamento (encaminhados / ofertados)', brPct(r.encaminhamento)], ['Recuperação na Confirmação (recuperados / quem disse não)', brPct(r.recuperacao)],

@@ -309,8 +309,10 @@ async function carregaPainel() {
   const mx = Math.max(1, ...serie.flatMap((x) => [x.agendamentos, x.encaminhados, x.concluidas]));
   box.innerHTML = `
     ${t.enc_sem_reserva ? `<div class="alert"><b>${t.enc_sem_reserva}</b> ${t.enc_sem_reserva === 1 ? 'cliente encaminhado à KINTO ainda não tem' : 'clientes encaminhados à KINTO ainda não têm'} locação registrada. <a href="#/casos" id="goac">Ver casos</a></div>` : ''}
+    ${t.enc_sem_registro ? `<div class="alert"><b>${t.enc_sem_registro}</b> ${t.enc_sem_registro === 1 ? 'cliente tem' : 'clientes têm'} atendimento ou locação da KINTO, mas o contato "Quer falar com a KINTO" não está registrado (foi editado, inativado ou a locação foi lançada direto). ${t.enc_sem_registro === 1 ? 'Ele' : 'Eles'} já ${t.enc_sem_registro === 1 ? 'conta' : 'contam'} como encaminhado${t.enc_sem_registro === 1 ? '' : 's'}. <a href="#/casos" id="goreg">Ver casos para revisar</a></div>` : ''}
     <div class="kpis">${kpi('Agendamentos', t.agendamentos, 'clientes agendados', cmp(t.agendamentos, ta && ta.agendamentos))}${kpi('Ofertados', t.ofertados, pct(r.oferta) + ' dos agendamentos', cmp(t.ofertados, ta && ta.ofertados))}${kpi('Encaminhados à KINTO', t.encaminhados, pct(r.encaminhamento) + ' dos ofertados · quiseram falar com a KINTO', cmp(t.encaminhados, ta && ta.encaminhados))}
       ${kpi('Alugaram', t.concluidas, pct(r.conversao_total) + ' dos agendamentos', cmp(t.concluidas, ta && ta.concluidas))}${kpi('Não alugaram', t.nao_concluidas, r.nao_conclusao == null ? 'sem locações registradas' : 'falaram com a KINTO e não alugaram · ' + pct(r.nao_conclusao), cmp(t.nao_concluidas, ta && ta.nao_concluidas, { inverso: true }))}</div>
+    <p class="muted small">Conferência: Encaminhados <b>${t.encaminhados}</b> = Alugaram <b>${t.concluidas}</b> + Não alugaram <b>${t.nao_concluidas}</b> + Sem locação registrada <b>${t.enc_sem_reserva}</b>${t.encaminhados === t.concluidas + t.nao_concluidas + t.enc_sem_reserva ? ' ✓' : ' ⚠ não fecha: avise o suporte'}</p>
     <div class="kpis">${kpi('Receita', brl(t.receita), '', cmp(t.receita, ta && ta.receita, { fmt: brl }))}${kpi('Ticket médio', t.ticket_medio == null ? '—' : brl(t.ticket_medio), 'por locação', cmp(t.ticket_medio, ta && ta.ticket_medio, { fmt: brl }))}
       ${kpi('Diárias', t.diarias, t.media_diarias == null ? 'sem locações' : String(Math.round(t.media_diarias * 10) / 10).replace('.', ',') + ' por locação', cmp(t.diarias, ta && ta.diarias))}${kpi('Tempo até a locação', fmtMin(tr.concluidas.mediana_min), 'do encaminhamento à locação (mediana)', cmp(tr.concluidas.mediana_min, ant && ant.tempo_reserva.concluidas.mediana_min, { inverso: true, fmt: fmtMin }))}
       ${kpi('Locações: Agendamento', t.locacoes_agendamento, 'quis falar com a KINTO no Agendamento', cmp(t.locacoes_agendamento, ta && ta.locacoes_agendamento))}${kpi('Locações: Confirmação', t.locacoes_confirmacao, 'quis falar com a KINTO na Confirmação', cmp(t.locacoes_confirmacao, ta && ta.locacoes_confirmacao))}</div>
@@ -347,6 +349,7 @@ async function carregaPainel() {
       <p class="muted small">Encaminhado → locação = alugaram ÷ encaminhados. Conversão total = alugaram ÷ agendamentos. Querer falar com a KINTO ainda não é locação.</p>${t.indecisos ? `<p class="muted small">Histórico: ${t.indecisos} ${t.indecisos === 1 ? 'registro antigo' : 'registros antigos'} de "Ainda não decidiu" (opção retirada). Eles continuam contando como encaminhados enquanto seguem na fila.</p>` : ''}</details>
     <p class="muted small">${ant ? ` As setas comparam com ${fmtData(ant.periodo.de)} a ${fmtData(ant.periodo.ate)} (período anterior de mesmo tamanho); se o período atual ainda está em andamento, a comparação é com o anterior completo.` : ''}</p>`;
   applyBars(box);
+  const gr = $('#goreg'); if (gr) gr.addEventListener('click', () => { S.c.filtro = 'sem_registro_encaminhamento'; });
   const go = $('#goac'); if (go) go.addEventListener('click', () => { S.c.filtro = 'encaminhados_sem_reserva'; });
   marcaLive(p.gerado_em.slice(11, 19));
 }
@@ -459,7 +462,7 @@ function viewCasos() {
   $('#view').innerHTML = `<div class="page-head"><div><h1>Casos</h1><div class="muted small">Um caso é um cliente com uma revisão agendada. Clique para ver contatos e registrar a locação.</div></div>
     <div class="actions"><button class="btn alt sm" id="exc">Exportar casos (CSV)</button></div></div>
     <div class="filters card"><div class="f grow"><label>Buscar por nome ou telefone</label><input id="cq" value="${esc(S.c.q)}" placeholder="Ex.: Maria ou 98888"></div>
-      <div class="f"><label>Situação</label><select id="cf"><option value="">Todos</option><option value="encaminhados_sem_reserva">Encaminhados à KINTO, sem locação registrada</option><option value="com_reserva">Com locação registrada</option></select></div>
+      <div class="f"><label>Situação</label><select id="cf"><option value="">Todos</option><option value="encaminhados_sem_reserva">Encaminhados à KINTO, sem locação registrada</option><option value="com_reserva">Com locação registrada</option><option value="sem_registro_encaminhamento">Locação/atendimento sem "Quer falar" registrado (revisar)</option></select></div>
       <div class="f"><label>Loja</label><select id="cl">${opts(S.cfg.lojas, S.c.loja, 'Todas')}</select></div></div>
     <div class="card"><div class="tbl-wrap" id="clist"><div class="empty">Carregando…</div></div></div>`;
   $('#cf').value = S.c.filtro;

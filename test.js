@@ -503,7 +503,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
       EXISTS (SELECT 1 FROM contatos x WHERE x.caso_id = c.id AND x.ativo = 1 AND x.resultado = 'Aceitou')
       OR (SELECT x.resultado FROM contatos x WHERE x.caso_id = c.id AND x.ativo = 1 ORDER BY x.id DESC LIMIT 1) = 'Ainda não decidiu')`).get(rev).n;
     assert.strictEqual(p.totais.encaminhados, esp, 'mesma regra da fila');
-    assert.ok(p.totais.encaminhados <= p.totais.ofertados, 'encaminhados <= ofertados');
+    assert.ok(p.taxas.encaminhamento <= 1, 'taxa de encaminhamento nunca passa de 100%');
     assert.ok(p.totais.encaminhados >= Math.max(p.totais.aceitaram, 0) && p.totais.encaminhados <= p.totais.aceitaram + p.totais.indecisos, 'sem dupla contagem');
     assert.ok(p.totais.enc_sem_reserva <= p.totais.encaminhados);
     assert.ok(p.taxas.encaminhado_locacao <= 1 && p.taxas.encaminhamento <= 1);
@@ -549,6 +549,26 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.strictEqual(cfg3.rotulos['Concluída'], 'Alugou'); assert.strictEqual(cfg3.rotulos['Não concluída'], 'Não alugou');
     assert.ok(cfg3.motivos_nao_conclusao.includes('Sem contato com o cliente'));
     assert.ok(['Concluída', 'Não concluída'].every((v) => cfg3.status_reserva.includes(v)), 'valores gravados intactos');
+  });
+  await t('os números fecham: Encaminhados = Alugaram + Não alugaram + Sem locação; locação sem "Quer falar" é sinalizada', async () => {
+    const ant = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data.totais;
+    await reg({ cliente_nome: 'Sem Aceite 1', telefone: '62 91111-0001', resultado: 'Recusou', motivo_id: mot('Recusou', 'Preço') });
+    await reg({ cliente_nome: 'Sem Aceite 2', telefone: '62 91111-0002', resultado: 'Recusou', motivo_id: mot('Recusou', 'Preço') });
+    for (const n of ['Sem Aceite 1', 'Sem Aceite 2']) {
+      const id = (await call(gest, 'GET', '/api/casos?q=' + encodeURIComponent(n))).data[0].id;
+      assert.strictEqual((await call(gest, 'PUT', `/api/casos/${id}/reserva`, { status: 'Não concluída', motivo_nao_conclusao: 'Cliente desistiu' })).status, 200);
+    }
+    const p = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data;
+    const x = p.totais;
+    assert.strictEqual(x.encaminhados, x.concluidas + x.nao_concluidas + x.enc_sem_reserva, 'identidade do funil');
+    assert.strictEqual(x.encaminhados, ant.encaminhados + 2, 'quem tem locação conta como encaminhado');
+    assert.strictEqual(x.enc_sem_registro, ant.enc_sem_registro + 2, 'sinalizados para revisão');
+    assert.ok(x.nao_concluidas <= x.encaminhados && x.concluidas <= x.encaminhados);
+    assert.strictEqual(p.por_loja.reduce((s, l) => s + l.encaminhados, 0), x.encaminhados);
+    const rev1 = (await call(gest, 'GET', '/api/casos?filtro=sem_registro_encaminhamento')).data;
+    assert.ok(rev1.length >= 2 && rev1.every((c) => c.reserva_status || c.atendente), 'filtro de revisão');
+    const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
+    assert.ok(rel.includes('Quer falar com a KINTO"" (revisar)'), 'aparece no relatório');
   });
   await t('excluir caso: só administrador, exige confirmação, apaga tudo do caso, audita e faz backup', async () => {
     const r = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Caso Excluir', telefone: '62 94444-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
