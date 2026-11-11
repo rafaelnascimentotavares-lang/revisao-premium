@@ -151,7 +151,7 @@ app.get('/api/config', auth, (req, res) => {
   const colaboradores = ehGestor(u) ? db.prepare("SELECT id, nome, loja_id FROM usuarios WHERE perfil = 'colaborador' AND ativo = 1 ORDER BY nome").all() : [];
   const consultores = ehGestor(u) ? db.prepare("SELECT id, nome, loja_id FROM usuarios WHERE perfil = 'kinto' AND ativo = 1 ORDER BY nome").all().map((c) => ({ ...c, lojas_ids: lojasDe(c) })) : [];
   res.json({
-    etapas: D.ETAPAS, resultados: D.RESULTADOS, motivos, lojas, colaboradores, consultores,
+    etapas: D.ETAPAS, resultados: RES_NOVOS, motivos, lojas, colaboradores, consultores,
     rotulos: ROTULO, status_reserva: D.STATUS_RESERVA, motivos_nao_conclusao: D.MOTIVOS_NAO_CONCLUSAO,
     valor_diaria_padrao: D.VALOR_DIARIA_PADRAO, escalona_minutos: alertas.ESCALA_MIN,
   });
@@ -215,7 +215,9 @@ app.get('/api/stream', auth, filaAcesso, (req, res) => {
 });
 
 // Nomes exibidos nas telas e relatórios. Os valores gravados no banco NÃO mudam (Aceitou, Ainda não decidiu, Concluída, Não concluída).
-const ROTULO = { 'Aceitou': 'Aceitou falar com a KINTO', 'Ainda não decidiu': 'Ainda não decidiu a locação', 'Concluída': 'Locação realizada', 'Não concluída': 'Não locou' };
+const ROTULO = { 'Aceitou': 'Quer falar com a KINTO', 'Recusou': 'Não quer falar com a KINTO', 'Ainda não decidiu': 'Quer falar com a KINTO (indeciso, registro antigo)', 'Concluída': 'Locação realizada', 'Não concluída': 'Não locou' };
+// "Ainda não decidiu" foi retirado das telas de registro; os registros antigos continuam gravados e contam normalmente.
+const RES_NOVOS = D.RESULTADOS.filter((r) => r !== 'Ainda não decidiu');
 const rot = (v) => ROTULO[v] || v;
 const temAceite = (alias = 'c') => `EXISTS (SELECT 1 FROM contatos x WHERE x.caso_id = ${alias}.id AND x.ativo = 1 AND x.resultado = 'Aceitou')`;
 // Entra na fila KINTO: quem aceitou OU quem está "Ainda não decidiu" (último resultado), para a KINTO entrar em contato.
@@ -237,7 +239,7 @@ app.post('/api/contatos', auth, registra, wrap((req, res) => {
   const dataRev = String(b.data_revisao || '');
   if (!isDate(dataRev) || dataRev < addDays(hoje(), -30) || dataRev > addDays(hoje(), 365)) throw bad('Data da revisão inválida');
   const resultado = String(b.resultado || '');
-  if (!D.RESULTADOS.includes(resultado)) throw bad('Resultado inválido');
+  if (!RES_NOVOS.includes(resultado)) throw bad(resultado === 'Ainda não decidiu' ? 'Esta opção foi retirada. Registre "Quer falar com a KINTO" ou "Não quer falar com a KINTO" (motivo "Pediu para pensar / ligar depois").' : 'Resultado inválido');
   const obs = txt(b.observacao, 500);
   const motivo = validaMotivo(resultado, b.motivo_id, obs);
   // A loja é a da revisão (escolhida no formulário), não a do colaborador: o agendamento atende as duas lojas.
@@ -313,7 +315,7 @@ function painel(q, { anterior = true } = {}) {
 
   const lojas = db.prepare('SELECT id, nome FROM lojas').all();
   const nomeLoja = new Map(lojas.map((l) => [l.id, l.nome]));
-  const zera = () => ({ concluidas_aceitos: 0, agendamentos: 0, contatados: 0, ofertados: 0, aceitaram: 0, recusaram: 0, indecisos: 0, recuperados: 0, concluidas: 0, nao_concluidas: 0, aceitos_sem_reserva: 0, encaminhados: 0, concluidas_enc: 0, enc_sem_reserva: 0 });
+  const zera = () => ({ concluidas_aceitos: 0, agendamentos: 0, contatados: 0, ofertados: 0, aceitaram: 0, recusaram: 0, indecisos: 0, recuperados: 0, resistentes: 0, concluidas: 0, nao_concluidas: 0, aceitos_sem_reserva: 0, encaminhados: 0, concluidas_enc: 0, enc_sem_reserva: 0 });
   const tot = zera();
   const porLoja = new Map();
   const dias = new Map();
@@ -329,8 +331,10 @@ function painel(q, { anterior = true } = {}) {
       recusou: res.length > 0 && res[res.length - 1] === 'Recusou',
       indeciso: res.includes('Ainda não decidiu'),
     };
-    const iInd = res.indexOf('Ainda não decidiu');
-    f.recuperado = f.indeciso && res.slice(iInd + 1).includes('Aceitou');
+    // Recuperado = disse não (ou ainda não decidiu) em algum contato e depois quis falar com a KINTO.
+    const iNao = res.findIndex((r) => r === 'Recusou' || r === 'Ainda não decidiu');
+    f.resistiu = iNao >= 0;
+    f.recuperado = iNao >= 0 && res.slice(iNao + 1).includes('Aceitou');
     // Encaminhado à KINTO = mesma regra da fila: aceitou em algum momento OU o último resultado é "Ainda não decidiu". Conta uma vez.
     f.encaminhado = f.aceitou || res[res.length - 1] === 'Ainda não decidiu';
     const rv = resPorCaso.get(c.id);
@@ -343,6 +347,7 @@ function painel(q, { anterior = true } = {}) {
       if (f.recusou) alvo.recusaram++;
       if (f.indeciso) alvo.indecisos++;
       if (f.recuperado) alvo.recuperados++;
+      if (f.resistiu) alvo.resistentes++;
       if (rv && rv.status === 'Concluída') { alvo.concluidas++; if (f.aceitou) alvo.concluidas_aceitos++; }
       if (rv && rv.status === 'Não concluída') alvo.nao_concluidas++;
       if (f.aceitou && !rv) alvo.aceitos_sem_reserva++;
@@ -360,7 +365,7 @@ function painel(q, { anterior = true } = {}) {
   const concluidasDeAceitos = casos.filter((c) => (porCaso.get(c.id) || []).some((t) => t.resultado === 'Aceitou') && resPorCaso.get(c.id)?.status === 'Concluída').length;
 
   const taxas = (a) => ({
-    oferta: pct(a.ofertados, a.agendamentos), aceite: pct(a.aceitaram, a.ofertados), recuperacao: pct(a.recuperados, a.indecisos),
+    oferta: pct(a.ofertados, a.agendamentos), aceite: pct(a.aceitaram, a.ofertados), recuperacao: pct(a.recuperados, a.resistentes),
     aceite_reserva: pct(a.concluidas_aceitos, a.aceitaram), encaminhamento: pct(a.encaminhados, a.ofertados), encaminhado_locacao: pct(a.concluidas_enc, a.encaminhados), nao_conclusao: pct(a.nao_concluidas, a.concluidas + a.nao_concluidas), conversao_total: pct(a.concluidas, a.agendamentos),
   });
 
@@ -555,6 +560,7 @@ app.put('/api/contatos/:id', auth, gestor, wrap((req, res) => {
   const resultado = String(req.body.resultado || '');
   const obs = txt(req.body.observacao, 500);
   if (!D.ETAPAS.includes(etapa)) throw bad('Etapa inválida');
+  if (!RES_NOVOS.includes(resultado) && resultado !== antes.resultado) throw bad('Esta opção foi retirada. Escolha "Quer falar com a KINTO" ou "Não quer falar com a KINTO".');
   if (!D.RESULTADOS.includes(resultado)) throw bad('Resultado inválido');
   const m = validaMotivo(resultado, req.body.motivo_id, obs);
   const estAntes = estadoFila(antes.caso_id);
@@ -775,15 +781,15 @@ app.get('/api/export/painel.csv', auth, gestor, wrap((req, res) => {
   const lojaNome = Number(req.query.loja) ? (db.prepare('SELECT nome FROM lojas WHERE id = ?').get(Number(req.query.loja)) || {}).nome : 'Todas';
   const colabNome = Number(req.query.colab) ? (db.prepare('SELECT nome FROM usuarios WHERE id = ?').get(Number(req.query.colab)) || {}).nome : 'Todos';
   bloco('Relatório do painel | Revisão Premium', null, [['Período', `${brData(p.periodo.de)} a ${brData(p.periodo.ate)}`], ['Loja', lojaNome || 'Todas'], ['Colaborador', colabNome || 'Todos'], ['Gerado em', brHora(p.gerado_em)]]);
-  bloco('Indicadores', ['Indicador', 'Valor'], [['Agendamentos', t.agendamentos], ['Contatados', t.contatados], ['Ofertados', t.ofertados], ['Encaminhados à KINTO (aceitaram falar com a KINTO, inclui indecisos)', t.encaminhados], ['Aceitou falar com a KINTO', t.aceitaram], ['Ainda não decidiu a locação', t.indecisos],
-    ['Indecisos que aceitaram depois', t.recuperados], ['Recusaram', t.recusaram], ['Locações realizadas', t.concluidas], ['Não locaram (falaram com a KINTO e não alugaram)', t.nao_concluidas],
+  bloco('Indicadores', ['Indicador', 'Valor'], [['Agendamentos', t.agendamentos], ['Contatados', t.contatados], ['Ofertados', t.ofertados], ['Encaminhados à KINTO (quiseram falar com a KINTO)', t.encaminhados], ['Não quiseram falar com a KINTO', t.recusaram],
+    ['Recuperados na Confirmação (disseram não e depois quiseram falar)', t.recuperados], ['Registros antigos "Ainda não decidiu" (histórico)', t.indecisos], ['Locações realizadas', t.concluidas], ['Não locaram (falaram com a KINTO e não alugaram)', t.nao_concluidas],
     ['Encaminhados sem locação registrada', t.enc_sem_reserva], ['Diárias', t.diarias], ['Receita (R$)', brNum(t.receita)],
-    ['Locações realizadas — aceitou falar com a KINTO no Agendamento', t.locacoes_agendamento], ['Locações realizadas — aceitou falar com a KINTO na Confirmação', t.locacoes_confirmacao],
+    ['Locações realizadas — quis falar com a KINTO no Agendamento', t.locacoes_agendamento], ['Locações realizadas — quis falar com a KINTO na Confirmação', t.locacoes_confirmacao],
     ['Ticket médio por locação realizada (R$)', brNum(t.ticket_medio)], ['Média de diárias por locação realizada', num(t.media_diarias == null ? null : Math.round(t.media_diarias * 10) / 10)]]);
-  bloco('Taxas', ['Taxa', 'Valor'], [['Taxa de oferta (ofertados / agendamentos)', brPct(r.oferta)], ['Taxa de aceite da conversa (encaminhados / ofertados)', brPct(r.encaminhamento)], ['Recuperação na confirmação', brPct(r.recuperacao)],
-    ['Conversa para locação (locações / encaminhados)', brPct(r.encaminhado_locacao)], ['Não locaram (não locaram / locações registradas)', brPct(r.nao_conclusao)], ['Conversão total (locações / agendamentos)', brPct(r.conversao_total)]]);
+  bloco('Taxas', ['Taxa', 'Valor'], [['Taxa de oferta (ofertados / agendamentos)', brPct(r.oferta)], ['Taxa de encaminhamento (encaminhados / ofertados)', brPct(r.encaminhamento)], ['Recuperação na Confirmação (recuperados / quem disse não)', brPct(r.recuperacao)],
+    ['Encaminhado para locação (locações / encaminhados)', brPct(r.encaminhado_locacao)], ['Não locaram (não locaram / locações registradas)', brPct(r.nao_conclusao)], ['Conversão total (locações / agendamentos)', brPct(r.conversao_total)]]);
   const tr = p.tempo_reserva;
-  bloco('Tempo do aceite até a reserva', ['Desfecho', 'Reservas', 'Mediana', 'Média'], [
+  bloco('Tempo do encaminhamento até a locação', ['Desfecho', 'Reservas', 'Mediana', 'Média'], [
     ['Locação realizada', tr.concluidas.n, fmtMin(tr.concluidas.mediana_min), fmtMin(tr.concluidas.media_min)],
     ['Não locou', tr.nao_concluidas.n, fmtMin(tr.nao_concluidas.mediana_min), fmtMin(tr.nao_concluidas.media_min)]]);
   if (p.anterior) {
@@ -794,16 +800,17 @@ app.get('/api/export/painel.csv', auth, gestor, wrap((req, res) => {
       lin('Agendamentos', t.agendamentos, ta.agendamentos), lin('Ofertados', t.ofertados, ta.ofertados), lin('Encaminhados à KINTO', t.encaminhados, ta.encaminhados),
       lin('Locações realizadas', t.concluidas, ta.concluidas), lin('Não locaram', t.nao_concluidas, ta.nao_concluidas),
       lin('Receita (R$)', t.receita, ta.receita, brNum), lin('Ticket médio (R$)', t.ticket_medio || 0, ta.ticket_medio || 0, brNum),
-      ['Taxa de aceite da conversa', brPct(r.encaminhamento), brPct(ra.encaminhamento), ''], ['Conversão total', brPct(r.conversao_total), brPct(ra.conversao_total), ''],
-      ['Tempo mediano aceite → locação realizada', fmtMin(tr.concluidas.mediana_min), fmtMin(an.tempo_reserva.concluidas.mediana_min), '']]);
+      ['Taxa de encaminhamento', brPct(r.encaminhamento), brPct(ra.encaminhamento), ''], ['Conversão total', brPct(r.conversao_total), brPct(ra.conversao_total), ''],
+      ['Tempo mediano encaminhamento → locação realizada', fmtMin(tr.concluidas.mediana_min), fmtMin(an.tempo_reserva.concluidas.mediana_min), '']]);
   }
   bloco('Por dia', ['Data', 'Agendamentos', 'Ofertados', 'Encaminhados à KINTO', 'Locações realizadas'], p.serie.map((d) => [brData(d.data), d.agendamentos, d.ofertados, d.encaminhados, d.concluidas]));
-  for (const [titulo, lista] of [['Motivos de recusa', p.motivos.recusa], ['Motivos de aceite da conversa', p.motivos.aceite], ['Motivos de indecisão', p.motivos.indeciso], ['Motivos de não atendeu', p.motivos.nao_atendeu], ['Motivos de não ofertado', p.motivos.nao_ofertado], ['Motivos de não locação', p.motivos.nao_concluida]]) {
+  for (const [titulo, lista] of [['Motivos para não falar com a KINTO', p.motivos.recusa], ['Motivos para falar com a KINTO', p.motivos.aceite], ['Motivos de indecisão (registros antigos)', p.motivos.indeciso], ['Motivos de não atendeu', p.motivos.nao_atendeu], ['Motivos de não ofertado', p.motivos.nao_ofertado], ['Motivos de não locação', p.motivos.nao_concluida]]) {
+    if (!lista.length && titulo.includes('registros antigos')) continue;
     const tot = lista.reduce((s, x) => s + x.n, 0);
     bloco(titulo, ['Motivo', 'Quantidade', '% do total'], lista.map((x) => [x.motivo, x.n, brPct(x.n / tot)]));
   }
-  bloco('Por loja', ['Loja', 'Agendamentos', 'Ofertados', 'Encaminhados à KINTO', 'Locações realizadas', 'Não locaram', 'Encaminhados sem locação registrada', 'Taxa de aceite da conversa', '% não locaram', 'Conversão total'], p.por_loja.map((l) => [l.loja, l.agendamentos, l.ofertados, l.encaminhados, l.concluidas, l.nao_concluidas, l.enc_sem_reserva, brPct(l.encaminhamento), brPct(l.nao_conclusao), brPct(l.conversao_total)]));
-  bloco('Por colaborador (contatos no período)', ['Colaborador', 'Contatos', 'Ofertas', 'Aceitou falar com a KINTO', 'Recusas', 'Não atendeu', 'Taxa de aceite da conversa'], p.por_colaborador.map((c) => [c.nome, c.contatos, c.ofertas, c.aceites, c.recusas, c.nao_atendeu, brPct(c.taxa_aceite)]));
+  bloco('Por loja', ['Loja', 'Agendamentos', 'Ofertados', 'Encaminhados à KINTO', 'Locações realizadas', 'Não locaram', 'Encaminhados sem locação registrada', 'Taxa de encaminhamento', '% não locaram', 'Conversão total'], p.por_loja.map((l) => [l.loja, l.agendamentos, l.ofertados, l.encaminhados, l.concluidas, l.nao_concluidas, l.enc_sem_reserva, brPct(l.encaminhamento), brPct(l.nao_conclusao), brPct(l.conversao_total)]));
+  bloco('Por colaborador (contatos no período)', ['Colaborador', 'Contatos', 'Ofertas', 'Quis falar com a KINTO', 'Não quis falar', 'Não atendeu', 'Taxa de encaminhamento'], p.por_colaborador.map((c) => [c.nome, c.contatos, c.ofertas, c.aceites, c.recusas, c.nao_atendeu, brPct(c.taxa_aceite)]));
   bloco('Atendimento KINTO', ['Indicador', 'Valor'], [['Aguardando atendimento', at.aguardando], ['Maior espera agora (min)', num(at.maior_espera_min)], ['Mediana até assumir (min)', num(at.mediana_assumir_min)]]);
   bloco('Atendimento por consultor', ['Consultor', 'Assumidos', 'Locações realizadas', 'Não locaram', 'Mediana até assumir (min)'], at.por_atendente.map((a) => [a.nome, a.assumidos, a.concluidas, a.nao_concluidas, num(a.mediana_assumir_min)]));
   baixar(res, 'relatorio-painel.csv', csvLinhas(L));
@@ -917,7 +924,7 @@ app.put('/api/lojas/:id', auth, admin, wrap((req, res) => {
 app.get('/api/motivos', auth, admin, (req, res) => res.json(db.prepare('SELECT * FROM motivos ORDER BY resultado, ordem, id').all()));
 app.post('/api/motivos', auth, admin, wrap((req, res) => {
   const resultado = String(req.body.resultado || ''), desc = txt(req.body.descricao, 80);
-  if (!D.RESULTADOS.includes(resultado)) throw bad('Resultado inválido');
+  if (!RES_NOVOS.includes(resultado)) throw bad('Resultado inválido');
   if (desc.length < 2) throw bad('Informe a descrição');
   if (db.prepare('SELECT 1 FROM motivos WHERE resultado = ? AND descricao = ?').get(resultado, desc)) throw bad('Este motivo já existe');
   const ordem = db.prepare('SELECT COALESCE(MAX(ordem),0)+1 n FROM motivos WHERE resultado = ?').get(resultado).n;

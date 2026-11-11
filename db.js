@@ -185,7 +185,7 @@ function auditar(usuarioId, entidade, entidadeId, acao, antes, depois) {
 const MOTIVOS_PADRAO = {
   'Aceitou': ['Precisa de carro durante a revisão', 'Preço ou desconto', 'Conveniência', 'Já conhece a KINTO', 'Indicação do consultor', 'Outro'],
   'Recusou': ['Tem outro veículo ou carona', 'Prefere app de transporte', 'Preço', 'Revisão rápida (aguarda na loja)', 'Não quer burocracia',
-    'Sem cartão de crédito para a pré-autorização', 'Desconhece ou desconfia do serviço', 'Outro'],
+    'Sem cartão de crédito para a pré-autorização', 'Desconhece ou desconfia do serviço', 'Pediu para pensar / ligar depois', 'Outro'],
   'Ainda não decidiu': ['Vai consultar família ou empresa', 'Quer decidir na confirmação', 'Avalia o preço', 'Outro'],
   'Não atendeu': ['Caixa postal ou não atendeu', 'Número inválido', 'Pediu retorno'],
   'Não ofertado': ['Fora do escopo do piloto', 'Cliente de frota ou empresa', 'Outro'],
@@ -197,6 +197,14 @@ function semear() {
     for (const [res, lista] of Object.entries(MOTIVOS_PADRAO)) {
       lista.forEach((d, i) => ins.run(res, d, i + 1, d === 'Outro' ? 1 : 0));
     }
+  }
+  // Motivo novo (uma única vez): quem não quer decidir na hora é registrado como "Não quer falar com a KINTO" + este motivo.
+  if (!db.prepare("SELECT 1 FROM meta WHERE chave = 'motivo_pensar'").get()) {
+    if (!db.prepare("SELECT 1 FROM motivos WHERE resultado = 'Recusou' AND descricao = 'Pediu para pensar / ligar depois'").get()) {
+      const ordem = (db.prepare("SELECT COALESCE(MAX(ordem), 0) m FROM motivos WHERE resultado = 'Recusou'").get().m || 0) + 1;
+      db.prepare('INSERT INTO motivos (resultado, descricao, ordem, exige_obs) VALUES (?,?,?,0)').run('Recusou', 'Pediu para pensar / ligar depois', ordem);
+    }
+    db.prepare("INSERT INTO meta (chave, valor) VALUES ('motivo_pensar', '1')").run();
   }
   if (db.prepare('SELECT COUNT(*) n FROM lojas').get().n === 0) {
     const ins = db.prepare('INSERT INTO lojas (nome, cidade) VALUES (?,?)');

@@ -72,8 +72,17 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
   const rev = hoje();
   const ANA = () => cfg.lojas.find((l) => l.nome === 'Anápolis').id, GYN = () => cfg.lojas.find((l) => l.nome === 'Goiânia').id;
   const reg = (o) => call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), ...o });
+  // "Ainda não decidiu" foi retirado do registro; para testar os registros antigos, grava-se direto no banco.
+  const legado = async (o) => {
+    const r = await reg({ ...o, resultado: 'Não atendeu', motivo_id: mot('Não atendeu', 'Caixa postal ou não atendeu') });
+    const { db } = require('./db');
+    db.prepare("UPDATE contatos SET resultado = 'Ainda não decidiu', motivo_id = ? WHERE id = (SELECT MAX(id) FROM contatos)").run(mot('Ainda não decidiu', 'Avalia o preço'));
+    return r;
+  };
 
   await t('validações do formulário', async () => {
+    assert.strictEqual((await reg({ cliente_nome: 'Quer Pensar', telefone: '62 90000-0001', resultado: 'Ainda não decidiu', motivo_id: mot('Ainda não decidiu', 'Avalia o preço') })).status, 400, '"Ainda não decidiu" foi retirado do registro');
+    assert.ok(mot('Recusou', 'Pediu para pensar / ligar depois'), 'motivo novo existe');
     const base = { cliente_nome: 'Teste', telefone: '(62) 99999-0000', resultado: 'Recusou', motivo_id: mot('Recusou', 'Preço') };
     assert.strictEqual((await reg({ ...base, telefone: '123' })).status, 400, 'telefone inválido');
     assert.strictEqual((await reg({ ...base, cliente_nome: '' })).status, 400, 'nome vazio');
@@ -92,7 +101,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.strictEqual(r.status, 201); assert.strictEqual(r.data.vinculado, false);
     assert.deepStrictEqual(Object.keys(r.data).sort(), ['ok', 'vinculado'], 'colaborador não recebe dados da base');
     await reg({ cliente_nome: 'Cliente B', telefone: '62 98888-0002', resultado: 'Recusou', motivo_id: mot('Recusou', 'Preço') });
-    await reg({ loja_id: GYN(), cliente_nome: 'Cliente C', telefone: '62 98888-0003', resultado: 'Ainda não decidiu', motivo_id: mot('Ainda não decidiu', 'Avalia o preço') });
+    await legado({ loja_id: GYN(), cliente_nome: 'Cliente C', telefone: '62 98888-0003' });
     r = await call(colab, 'POST', '/api/contatos', { etapa: 'Confirmação', loja_id: ANA(), cliente_nome: 'Cliente C', telefone: '+55 (62) 98888-0003', data_revisao: rev,
       resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Precisa de carro durante a revisão') });
     assert.strictEqual(r.status, 201); assert.strictEqual(r.data.vinculado, true, 'confirmação liga ao mesmo caso (com +55)');
@@ -135,7 +144,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.strictEqual(x.diarias, 3);
     const near = (a, b) => Math.abs(a - b) < 1e-9;
     assert.ok(near(p.taxas.oferta, 4 / 6)); assert.ok(near(p.taxas.aceite, 2 / 4));
-    assert.ok(near(p.taxas.recuperacao, 1)); assert.ok(near(p.taxas.aceite_reserva, 1 / 2)); assert.ok(near(p.taxas.conversao_total, 1 / 6));
+    assert.strictEqual(x.resistentes, 3, 'quem disse não ou ficou indeciso em algum contato'); assert.ok(near(p.taxas.recuperacao, 1 / 3), 'recuperados / quem disse não'); assert.ok(near(p.taxas.aceite_reserva, 1 / 2)); assert.ok(near(p.taxas.conversao_total, 1 / 6));
     assert.deepStrictEqual(p.motivos.recusa.map((m) => m.motivo).sort(), ['Outro', 'Preço']);
     assert.strictEqual(p.por_colaborador[0].nome, 'Ana');
     assert.strictEqual(p.por_colaborador[0].contatos, 7);
@@ -328,15 +337,8 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.strictEqual((await call(k1, 'GET', '/api/meu-dia')).status, 403, 'consultor KINTO não tem contador');
     assert.strictEqual((await call(anon, 'GET', '/api/meu-dia')).status, 401);
   });
-  await t('"Ainda não decidiu" também vai para o time KINTO da loja (e sai se virar recusa)', async () => {
-    await new Promise((r) => setTimeout(r, 500));
-    const abre = async (j) => { const ac = new AbortController(); const resp = await fetch(base + '/api/stream', { headers: { Cookie: j.cookie }, signal: ac.signal }); const reader = resp.body.getReader(); await reader.read(); let s = ''; (async () => { try { for (;;) { const { value, done } = await reader.read(); if (done) return; s += Buffer.from(value).toString(); } } catch { /* abortado */ } })(); return { ac, get: () => s }; };
-    const s1 = await abre(k1), s3 = await abre(k3);
-    await reg({ cliente_nome: 'Cliente Indeciso', telefone: '62 98888-0031', resultado: 'Ainda não decidiu', motivo_id: mot('Ainda não decidiu', 'Avalia o preço') });
-    await new Promise((r) => setTimeout(r, 800));
-    s1.ac.abort(); s3.ac.abort();
-    assert.ok(s1.get().includes('event: aceite') && s1.get().includes('Cliente Indeciso') && s1.get().includes('Ainda não decidiu'), 'Anápolis é avisada');
-    assert.ok(!s3.get().includes('Cliente Indeciso'), 'Goiânia não recebe');
+  await t('registro antigo "Ainda não decidiu" segue na fila da KINTO da loja (e sai se virar recusa)', async () => {
+    await legado({ cliente_nome: 'Cliente Indeciso', telefone: '62 98888-0031' });
     const f1 = (await call(k1, 'GET', '/api/fila')).data.itens, item = f1.find((x) => x.cliente_nome === 'Cliente Indeciso');
     assert.ok(item, 'aparece na fila da loja'); assert.strictEqual(item.origem, 'Ainda não decidiu'); assert.strictEqual(item.situacao, 'Aguardando');
     assert.ok(!(await call(k3, 'GET', '/api/fila')).data.itens.some((x) => x.cliente_nome === 'Cliente Indeciso'));
@@ -348,14 +350,14 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const enviados = []; const tr = { sendMail: async (m) => { enviados.push(m); return { message: '{}' }; } };
     await call(adm, 'PUT', `/api/lojas/${ANA()}`, { email_alerta: 'kinto.anapolis@saga.com' });
     await app.escalar('2030-01-02 10:00:00', tr);
-    assert.ok(enviados.some((m) => m.text.includes('Cliente Indeciso') && /ainda não decidiu a locação/.test(m.text)), 'e-mail de escalonamento cobre o indeciso');
+    assert.ok(enviados.some((m) => m.text.includes('Cliente Indeciso') && /quer falar com a KINTO/.test(m.text)), 'e-mail de escalonamento cobre o indeciso');
     // assume e registra a locação: funciona igual
     assert.strictEqual((await call(k1, 'POST', `/api/fila/${item.id}/assumir`)).status, 200);
     // quando o indeciso aceita depois, continua o mesmo caso; origem passa a Aceitou
     await call(colab, 'POST', '/api/contatos', { etapa: 'Confirmação', loja_id: ANA(), data_revisao: rev, cliente_nome: 'Cliente Indeciso', telefone: '62 98888-0031', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
     assert.strictEqual((await call(k1, 'GET', '/api/fila')).data.itens.find((x) => x.id === item.id).origem, 'Aceitou');
     // indeciso que depois recusa sai da fila (se ninguém assumiu)
-    await reg({ cliente_nome: 'Cliente Indeciso 2', telefone: '62 98888-0032', resultado: 'Ainda não decidiu', motivo_id: mot('Ainda não decidiu', 'Avalia o preço') });
+    await legado({ cliente_nome: 'Cliente Indeciso 2', telefone: '62 98888-0032' });
     const i2 = (await call(k1, 'GET', '/api/fila')).data.itens.find((x) => x.cliente_nome === 'Cliente Indeciso 2').id;
     await call(colab, 'POST', '/api/contatos', { etapa: 'Confirmação', loja_id: ANA(), data_revisao: rev, cliente_nome: 'Cliente Indeciso 2', telefone: '62 98888-0032', resultado: 'Recusou', motivo_id: mot('Recusou', 'Preço') });
     assert.ok(!(await call(k1, 'GET', '/api/fila')).data.itens.some((x) => x.id === i2), 'recusou: sai da fila');
@@ -393,7 +395,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.ok(gy.includes('Goiânia') && !gy.includes(';Anápolis;'), 'respeita o filtro de loja');
     assert.strictEqual((await call(gest, 'GET', '/api/export/casos.csv?q=98888-0001')).data.split('\r\n').filter(Boolean).length, 2, 'respeita a busca');
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
-    for (const secao of ['Indicadores', 'Taxas', 'Por dia', 'Motivos de recusa', 'Por loja', 'Por colaborador', 'Atendimento KINTO']) assert.ok(rel.includes(secao), secao);
+    for (const secao of ['Indicadores', 'Taxas', 'Por dia', 'Motivos para não falar com a KINTO', 'Por loja', 'Por colaborador', 'Atendimento KINTO']) assert.ok(rel.includes(secao), secao);
     assert.ok(/Receita \(R\$\);\d+,\d\d/.test(rel), 'valores no formato pt-BR');
     const lojaRel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}&loja=${GYN()}`)).data;
     assert.ok(lojaRel.includes('Loja;Goiânia'));
@@ -437,7 +439,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const sete = (await call(gest, 'GET', `/api/painel?de=${addDaysT(rev, -6)}&ate=${rev}`)).data;
     assert.strictEqual(sete.anterior.periodo.de, addDaysT(rev, -13)); assert.strictEqual(sete.anterior.periodo.ate, addDaysT(rev, -7));
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
-    assert.ok(rel.includes('Ticket médio por locação realizada (R$);') && rel.includes('Tempo do aceite até a reserva\r\nDesfecho;') && rel.includes('Comparativo com o período anterior'));
+    assert.ok(rel.includes('Ticket médio por locação realizada (R$);') && rel.includes('Tempo do encaminhamento até a locação\r\nDesfecho;') && rel.includes('Comparativo com o período anterior'));
   });
   await t('painel: locações concluídas por etapa (aceite no Agendamento descarta a Confirmação)', async () => {
     const p = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data;
@@ -457,7 +459,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.strictEqual(depois.locacoes_agendamento, antes.locacoes_agendamento + 1);
     assert.strictEqual(depois.locacoes_confirmacao, antes.locacoes_confirmacao, 'Confirmação descartada');
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
-    assert.ok(rel.includes('Locações realizadas — aceitou falar com a KINTO no Agendamento;') && rel.includes('aceitou falar com a KINTO na Confirmação;'));
+    assert.ok(rel.includes('Locações realizadas — quis falar com a KINTO no Agendamento;') && rel.includes('quis falar com a KINTO na Confirmação;'));
   });
   await t('consultor KINTO em duas lojas: vê as duas filas, filtra por loja e não vê uma terceira', async () => {
     const k4 = jar('k4');
@@ -512,9 +514,26 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const st = db.prepare('SELECT DISTINCT status FROM reservas').all().map((r) => r.status);
     assert.ok(st.every((v) => ['Concluída', 'Não concluída'].includes(v)), 'status gravados intactos');
     const cfg2 = (await call(gest, 'GET', '/api/config')).data;
-    assert.strictEqual(cfg2.rotulos['Aceitou'], 'Aceitou falar com a KINTO'); assert.deepStrictEqual(cfg2.resultados.slice(0, 3), ['Aceitou', 'Recusou', 'Ainda não decidiu']);
+    assert.strictEqual(cfg2.rotulos['Aceitou'], 'Quer falar com a KINTO'); assert.strictEqual(cfg2.rotulos['Recusou'], 'Não quer falar com a KINTO'); assert.deepStrictEqual(cfg2.resultados, ['Aceitou', 'Recusou', 'Não atendeu', 'Não ofertado'], 'opção retirada da tela de registro');
     const f = (await call(gest, 'GET', '/api/casos?filtro=encaminhados_sem_reserva')).data;
     assert.ok(f.every((c) => !c.reserva_status), 'filtro novo: sem locação');
+  });
+  await t('sem "Ainda não decidiu": "pediu para pensar" é recusa e pode ser recuperado; registros antigos continuam editáveis', async () => {
+    const { db } = require('./db');
+    const antes = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data.totais;
+    await reg({ cliente_nome: 'Vai Pensar', telefone: '62 96666-0001', resultado: 'Recusou', motivo_id: mot('Recusou', 'Pediu para pensar / ligar depois') });
+    const p1 = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data.totais;
+    assert.strictEqual(p1.resistentes, antes.resistentes + 1); assert.strictEqual(p1.recuperados, antes.recuperados);
+    await call(colab, 'POST', '/api/contatos', { etapa: 'Confirmação', loja_id: ANA(), data_revisao: rev, cliente_nome: 'Vai Pensar', telefone: '62 96666-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
+    const p2 = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data.totais;
+    assert.strictEqual(p2.recuperados, antes.recuperados + 1, 'recusou e depois quis falar = recuperado');
+    assert.strictEqual(p2.encaminhados, antes.encaminhados + 1);
+    // registro antigo: editar sem trocar o resultado é permitido; trocar um contato comum para o valor antigo não
+    const leg = db.prepare("SELECT id, motivo_id FROM contatos WHERE resultado = 'Ainda não decidiu' ORDER BY id DESC LIMIT 1").get();
+    assert.strictEqual((await call(gest, 'PUT', '/api/contatos/' + leg.id, { resultado: 'Ainda não decidiu', motivo_id: leg.motivo_id, observacao: 'ajuste' })).status, 200, 'edição de registro antigo');
+    const normal = db.prepare("SELECT id FROM contatos WHERE resultado = 'Recusou' ORDER BY id DESC LIMIT 1").get();
+    assert.strictEqual((await call(gest, 'PUT', '/api/contatos/' + normal.id, { resultado: 'Ainda não decidiu', motivo_id: leg.motivo_id })).status, 400, 'não dá para voltar a usar a opção');
+    assert.strictEqual((await call(adm, 'POST', '/api/motivos', { resultado: 'Ainda não decidiu', descricao: 'Novo motivo' })).status, 400, 'sem motivos novos para a opção retirada');
   });
   await t('excluir caso: só administrador, exige confirmação, apaga tudo do caso, audita e faz backup', async () => {
     const r = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Caso Excluir', telefone: '62 94444-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
