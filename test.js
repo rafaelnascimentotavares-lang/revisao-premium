@@ -548,6 +548,9 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const cfg3 = (await call(gest, 'GET', '/api/config')).data;
     assert.strictEqual(cfg3.rotulos['Concluída'], 'Alugou'); assert.strictEqual(cfg3.rotulos['Não concluída'], 'Não alugou');
     assert.ok(cfg3.motivos_nao_conclusao.includes('Sem contato com o cliente'));
+    assert.ok(['Preço', 'Não quer burocracia', 'Pediu para pensar / ligar depois'].every((m) => cfg3.motivos_nao_conclusao.includes(m)), 'motivos novos');
+    assert.strictEqual(cfg3.motivos_nao_conclusao[cfg3.motivos_nao_conclusao.length - 1], 'Outro');
+    assert.strictEqual((await call(gest, 'PUT', `/api/casos/${id}/reserva`, { status: 'Não concluída', motivo_nao_conclusao: 'Preço' })).status, 200);
     assert.ok(['Concluída', 'Não concluída'].every((v) => cfg3.status_reserva.includes(v)), 'valores gravados intactos');
   });
   await t('os números fecham: Encaminhados = Aguardando + Em atendimento + Alugaram + Não alugaram; locação sem "Quer falar" é sinalizada', async () => {
