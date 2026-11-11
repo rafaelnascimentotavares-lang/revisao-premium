@@ -67,7 +67,7 @@ const RESULTADOS = ['Aceitou', 'Recusou', 'Ainda não decidiu', 'Não atendeu', 
 const OFERTADOS = ['Aceitou', 'Recusou', 'Ainda não decidiu'];
 const PERFIS = ['colaborador', 'gestor_loja', 'gestor_kinto', 'kinto'];
 const STATUS_RESERVA = ['Concluída', 'Não concluída'];
-const MOTIVOS_NAO_CONCLUSAO = ['Cadastro reprovado', 'Sem cartão ou limite', 'Sem disponibilidade', 'Cliente desistiu', 'Outro'];
+const MOTIVOS_NAO_CONCLUSAO = ['Cadastro reprovado', 'Sem cartão ou limite', 'Sem disponibilidade', 'Cliente desistiu', 'Sem contato com o cliente', 'Outro'];
 const VALOR_DIARIA_PADRAO = Number(process.env.VALOR_DIARIA_PADRAO || 174.3);
 
 // ---------- datas no fuso de Brasília ----------

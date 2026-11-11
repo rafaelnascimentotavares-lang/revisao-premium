@@ -390,7 +390,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.ok(casosCsv.includes('"Zé ""Aspas""; Ponto"'), 'aspas e ponto e vírgula escapados');
     assert.ok(casosCsv.includes('Cliente A'), 'traz os casos');
     const so = (await call(gest, 'GET', `/api/export/casos.csv?filtro=com_reserva`)).data.split('\r\n').filter(Boolean);
-    assert.ok(so.length >= 2 && so.every((l, i) => i === 0 || /Locação realizada|Não locou/.test(l)), 'respeita o filtro da tela');
+    assert.ok(so.length >= 2 && so.every((l, i) => i === 0 || /Alugou|Não alugou/.test(l)), 'respeita o filtro da tela');
     const gy = (await call(gest, 'GET', `/api/export/casos.csv?loja=${GYN()}`)).data;
     assert.ok(gy.includes('Goiânia') && !gy.includes(';Anápolis;'), 'respeita o filtro de loja');
     assert.strictEqual((await call(gest, 'GET', '/api/export/casos.csv?q=98888-0001')).data.split('\r\n').filter(Boolean).length, 2, 'respeita a busca');
@@ -412,7 +412,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const p2 = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data;
     assert.strictEqual(p2.motivos.nao_concluida.find((x) => x.motivo === 'Sem cartão ou limite').n, 1);
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
-    assert.ok(rel.includes('Motivos de não locação\r\nMotivo;Quantidade;% do total\r\n'), 'bloco no relatório');
+    assert.ok(rel.includes('Motivos para não alugar\r\nMotivo;Quantidade;% do total\r\n'), 'bloco no relatório');
     assert.ok(/Sem cartão ou limite;1;\d+,\d%/.test(rel) && /Cadastro reprovado;\d+;/.test(rel));
     const vazio = (await call(gest, 'GET', '/api/painel?de=2020-01-01&ate=2020-01-02')).data;
     assert.deepStrictEqual(vazio.motivos.nao_concluida, []);
@@ -425,7 +425,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const esperado = p.totais.nao_concluidas / (p.totais.concluidas + p.totais.nao_concluidas);
     assert.ok(Math.abs(p.taxas.nao_conclusao - esperado) < 1e-9, 'taxa = não concluídas / reservas registradas');
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
-    assert.ok(rel.includes('Não locaram;') && rel.includes('% não locaram') && rel.includes('Não locaram (não locaram / locações registradas);'));
+    assert.ok(rel.includes('Não alugaram;') && rel.includes('% não alugaram') && rel.includes('Não alugaram (não alugaram / locações registradas);'));
   });
   await t('painel: ticket médio, tempo do aceite até a reserva e comparativo com período anterior', async () => {
     const p = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data;
@@ -439,7 +439,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const sete = (await call(gest, 'GET', `/api/painel?de=${addDaysT(rev, -6)}&ate=${rev}`)).data;
     assert.strictEqual(sete.anterior.periodo.de, addDaysT(rev, -13)); assert.strictEqual(sete.anterior.periodo.ate, addDaysT(rev, -7));
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
-    assert.ok(rel.includes('Ticket médio por locação realizada (R$);') && rel.includes('Tempo do encaminhamento até a locação\r\nDesfecho;') && rel.includes('Comparativo com o período anterior'));
+    assert.ok(rel.includes('Ticket médio por locação (R$);') && rel.includes('Tempo do encaminhamento até a locação\r\nDesfecho;') && rel.includes('Comparativo com o período anterior'));
   });
   await t('painel: locações concluídas por etapa (aceite no Agendamento descarta a Confirmação)', async () => {
     const p = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data;
@@ -459,7 +459,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.strictEqual(depois.locacoes_agendamento, antes.locacoes_agendamento + 1);
     assert.strictEqual(depois.locacoes_confirmacao, antes.locacoes_confirmacao, 'Confirmação descartada');
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
-    assert.ok(rel.includes('Locações realizadas — quis falar com a KINTO no Agendamento;') && rel.includes('quis falar com a KINTO na Confirmação;'));
+    assert.ok(rel.includes('Alugaram — quis falar com a KINTO no Agendamento;') && rel.includes('quis falar com a KINTO na Confirmação;'));
   });
   await t('consultor KINTO em duas lojas: vê as duas filas, filtra por loja e não vê uma terceira', async () => {
     const k4 = jar('k4');
@@ -534,6 +534,21 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const normal = db.prepare("SELECT id FROM contatos WHERE resultado = 'Recusou' ORDER BY id DESC LIMIT 1").get();
     assert.strictEqual((await call(gest, 'PUT', '/api/contatos/' + normal.id, { resultado: 'Ainda não decidiu', motivo_id: leg.motivo_id })).status, 400, 'não dá para voltar a usar a opção');
     assert.strictEqual((await call(adm, 'POST', '/api/motivos', { resultado: 'Ainda não decidiu', descricao: 'Novo motivo' })).status, 400, 'sem motivos novos para a opção retirada');
+  });
+  await t('Alugou exige diárias; Não alugou exige motivo (inclui "Sem contato com o cliente"); rótulos novos', async () => {
+    await reg({ cliente_nome: 'Cliente Aluguel', telefone: '62 92222-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
+    const id = (await call(gest, 'GET', '/api/casos?q=Cliente%20Aluguel')).data[0].id;
+    assert.strictEqual((await call(gest, 'PUT', `/api/casos/${id}/reserva`, { status: 'Concluída' })).status, 400, 'Alugou sem diárias');
+    assert.strictEqual((await call(gest, 'PUT', `/api/casos/${id}/reserva`, { status: 'Concluída', diarias: 0 })).status, 400, 'Alugou com 0 diária');
+    assert.strictEqual((await call(gest, 'PUT', `/api/casos/${id}/reserva`, { status: 'Não concluída' })).status, 400, 'Não alugou sem motivo');
+    assert.strictEqual((await call(gest, 'PUT', `/api/casos/${id}/reserva`, { status: 'Não concluída', motivo_nao_conclusao: 'Sem contato com o cliente' })).status, 200, 'motivo novo aceito');
+    const dt = hoje(); const fim = require('./db').addDays(dt, 3);
+    assert.strictEqual((await call(gest, 'PUT', `/api/casos/${id}/reserva`, { status: 'Concluída', retirada: dt, devolucao: fim })).status, 200, 'diárias calculadas pelas datas');
+    assert.strictEqual((await call(gest, 'GET', `/api/casos/${id}`)).data.reserva.diarias, 3);
+    const cfg3 = (await call(gest, 'GET', '/api/config')).data;
+    assert.strictEqual(cfg3.rotulos['Concluída'], 'Alugou'); assert.strictEqual(cfg3.rotulos['Não concluída'], 'Não alugou');
+    assert.ok(cfg3.motivos_nao_conclusao.includes('Sem contato com o cliente'));
+    assert.ok(['Concluída', 'Não concluída'].every((v) => cfg3.status_reserva.includes(v)), 'valores gravados intactos');
   });
   await t('excluir caso: só administrador, exige confirmação, apaga tudo do caso, audita e faz backup', async () => {
     const r = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Caso Excluir', telefone: '62 94444-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });

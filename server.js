@@ -215,7 +215,7 @@ app.get('/api/stream', auth, filaAcesso, (req, res) => {
 });
 
 // Nomes exibidos nas telas e relatórios. Os valores gravados no banco NÃO mudam (Aceitou, Ainda não decidiu, Concluída, Não concluída).
-const ROTULO = { 'Aceitou': 'Quer falar com a KINTO', 'Recusou': 'Não quer falar com a KINTO', 'Ainda não decidiu': 'Quer falar com a KINTO (indeciso, registro antigo)', 'Concluída': 'Locação realizada', 'Não concluída': 'Não locou' };
+const ROTULO = { 'Aceitou': 'Quer falar com a KINTO', 'Recusou': 'Não quer falar com a KINTO', 'Ainda não decidiu': 'Quer falar com a KINTO (indeciso, registro antigo)', 'Concluída': 'Alugou', 'Não concluída': 'Não alugou' };
 // "Ainda não decidiu" foi retirado das telas de registro; os registros antigos continuam gravados e contam normalmente.
 const RES_NOVOS = D.RESULTADOS.filter((r) => r !== 'Ainda não decidiu');
 const rot = (v) => ROTULO[v] || v;
@@ -586,11 +586,11 @@ app.delete('/api/contatos/:id', auth, gestor, wrap((req, res) => {
 function salvarReserva(userId, id, b) {
   b = b || {};
   const status = String(b.status || '');
-  if (!D.STATUS_RESERVA.includes(status)) throw bad('Status da reserva inválido');
+  if (!D.STATUS_RESERVA.includes(status)) throw bad('Situação da locação inválida');
   let motivoNc = null;
   if (status === 'Não concluída') {
     motivoNc = String(b.motivo_nao_conclusao || '');
-    if (!D.MOTIVOS_NAO_CONCLUSAO.includes(motivoNc)) throw bad('Informe o motivo da não conclusão');
+    if (!D.MOTIVOS_NAO_CONCLUSAO.includes(motivoNc)) throw bad('Informe o motivo de não ter alugado');
   }
   const dt = (v) => { if (!v) return null; if (!isDate(String(v))) throw bad('Data inválida'); return String(v); };
   const retirada = dt(b.retirada), devolucao = dt(b.devolucao);
@@ -600,6 +600,7 @@ function salvarReserva(userId, id, b) {
   if (diarias == null && retirada && devolucao) diarias = Math.max(1, Math.round((new Date(devolucao) - new Date(retirada)) / 86400000));
   const valorDia = b.valor_diaria === '' || b.valor_diaria == null ? D.VALOR_DIARIA_PADRAO : Number(b.valor_diaria);
   if (!Number.isFinite(valorDia) || valorDia < 0 || valorDia > 100000) throw bad('Valor da diária inválido');
+  if (status === 'Concluída' && (diarias == null || diarias < 1)) throw bad('Para marcar "Alugou", informe as diárias (ou a retirada e a devolução).');
   const total = status === 'Concluída' && diarias != null ? Math.round(diarias * valorDia * 100) / 100 : null;
   const antes = db.prepare('SELECT * FROM reservas WHERE caso_id = ?').get(id);
   db.prepare(`INSERT INTO reservas (caso_id, status, motivo_nao_conclusao, retirada, devolucao, modelo, diarias, valor_diaria, valor_total, registrado_por, atualizado_em, criado_em)
@@ -756,7 +757,7 @@ app.get('/api/export/reservas.csv', auth, gestor, wrap((req, res) => {
     LEFT JOIN atendimentos a ON a.caso_id = c.id LEFT JOIN usuarios ua ON ua.id = a.usuario_id
     ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY r.id`).all(...p).map((r) => ({ ...r, status: rot(r.status) }));
   baixar(res, 'reservas.csv', csv(rows, [['caso_id', 'Caso'], ['cliente_nome', 'Cliente'], ['telefone', 'Telefone'], ['data_revisao', 'Data da revisão'], ['loja', 'Loja'], ['atendente', 'Atendente KINTO'], ['status', 'Situação da locação'],
-    ['motivo_nao_conclusao', 'Motivo de não locação'], ['retirada', 'Retirada'], ['devolucao', 'Devolução'], ['modelo', 'Modelo'], ['diarias', 'Diárias'],
+    ['motivo_nao_conclusao', 'Motivo de não ter alugado'], ['retirada', 'Retirada'], ['devolucao', 'Devolução'], ['modelo', 'Modelo'], ['diarias', 'Diárias'],
     ['valor_diaria', 'Valor da diária'], ['valor_total', 'Valor total']]));
 }));
 
@@ -768,7 +769,7 @@ app.get('/api/export/casos.csv', auth, gestor, wrap((req, res) => {
   }));
   baixar(res, 'casos.csv', csv(rows, [['id', 'Caso'], ['cliente_nome', 'Cliente'], ['telefone', 'Telefone'], ['data_revisao', 'Data da revisão'], ['loja', 'Loja'],
     ['criado_em', 'Criado em'], ['criado_por', 'Criado por'], ['n_contatos', 'Contatos'], ['ultimo_resultado', 'Último resultado'], ['ultimo_motivo', 'Último motivo'],
-    ['atendente', 'Atendente KINTO'], ['assumido_em', 'Assumido em'], ['reserva_status', 'Situação da locação'], ['motivo_nao_conclusao', 'Motivo de não locação'],
+    ['atendente', 'Atendente KINTO'], ['assumido_em', 'Assumido em'], ['reserva_status', 'Situação da locação'], ['motivo_nao_conclusao', 'Motivo de não ter alugado'],
     ['retirada', 'Retirada'], ['devolucao', 'Devolução'], ['modelo', 'Modelo'], ['diarias', 'Diárias'], ['valor_diaria', 'Valor da diária'], ['valor_total', 'Valor total']]));
 }));
 
@@ -782,37 +783,37 @@ app.get('/api/export/painel.csv', auth, gestor, wrap((req, res) => {
   const colabNome = Number(req.query.colab) ? (db.prepare('SELECT nome FROM usuarios WHERE id = ?').get(Number(req.query.colab)) || {}).nome : 'Todos';
   bloco('Relatório do painel | Revisão Premium', null, [['Período', `${brData(p.periodo.de)} a ${brData(p.periodo.ate)}`], ['Loja', lojaNome || 'Todas'], ['Colaborador', colabNome || 'Todos'], ['Gerado em', brHora(p.gerado_em)]]);
   bloco('Indicadores', ['Indicador', 'Valor'], [['Agendamentos', t.agendamentos], ['Contatados', t.contatados], ['Ofertados', t.ofertados], ['Encaminhados à KINTO (quiseram falar com a KINTO)', t.encaminhados], ['Não quiseram falar com a KINTO', t.recusaram],
-    ['Recuperados na Confirmação (disseram não e depois quiseram falar)', t.recuperados], ['Registros antigos "Ainda não decidiu" (histórico)', t.indecisos], ['Locações realizadas', t.concluidas], ['Não locaram (falaram com a KINTO e não alugaram)', t.nao_concluidas],
+    ['Recuperados na Confirmação (disseram não e depois quiseram falar)', t.recuperados], ['Registros antigos "Ainda não decidiu" (histórico)', t.indecisos], ['Alugaram', t.concluidas], ['Não alugaram (falaram com a KINTO e não alugaram)', t.nao_concluidas],
     ['Encaminhados sem locação registrada', t.enc_sem_reserva], ['Diárias', t.diarias], ['Receita (R$)', brNum(t.receita)],
-    ['Locações realizadas — quis falar com a KINTO no Agendamento', t.locacoes_agendamento], ['Locações realizadas — quis falar com a KINTO na Confirmação', t.locacoes_confirmacao],
-    ['Ticket médio por locação realizada (R$)', brNum(t.ticket_medio)], ['Média de diárias por locação realizada', num(t.media_diarias == null ? null : Math.round(t.media_diarias * 10) / 10)]]);
+    ['Alugaram — quis falar com a KINTO no Agendamento', t.locacoes_agendamento], ['Alugaram — quis falar com a KINTO na Confirmação', t.locacoes_confirmacao],
+    ['Ticket médio por locação (R$)', brNum(t.ticket_medio)], ['Média de diárias por locação', num(t.media_diarias == null ? null : Math.round(t.media_diarias * 10) / 10)]]);
   bloco('Taxas', ['Taxa', 'Valor'], [['Taxa de oferta (ofertados / agendamentos)', brPct(r.oferta)], ['Taxa de encaminhamento (encaminhados / ofertados)', brPct(r.encaminhamento)], ['Recuperação na Confirmação (recuperados / quem disse não)', brPct(r.recuperacao)],
-    ['Encaminhado para locação (locações / encaminhados)', brPct(r.encaminhado_locacao)], ['Não locaram (não locaram / locações registradas)', brPct(r.nao_conclusao)], ['Conversão total (locações / agendamentos)', brPct(r.conversao_total)]]);
+    ['Encaminhado para locação (locações / encaminhados)', brPct(r.encaminhado_locacao)], ['Não alugaram (não alugaram / locações registradas)', brPct(r.nao_conclusao)], ['Conversão total (locações / agendamentos)', brPct(r.conversao_total)]]);
   const tr = p.tempo_reserva;
-  bloco('Tempo do encaminhamento até a locação', ['Desfecho', 'Reservas', 'Mediana', 'Média'], [
-    ['Locação realizada', tr.concluidas.n, fmtMin(tr.concluidas.mediana_min), fmtMin(tr.concluidas.media_min)],
-    ['Não locou', tr.nao_concluidas.n, fmtMin(tr.nao_concluidas.mediana_min), fmtMin(tr.nao_concluidas.media_min)]]);
+  bloco('Tempo do encaminhamento até a locação', ['Desfecho', 'Locações', 'Mediana', 'Média'], [
+    ['Alugou', tr.concluidas.n, fmtMin(tr.concluidas.mediana_min), fmtMin(tr.concluidas.media_min)],
+    ['Não alugou', tr.nao_concluidas.n, fmtMin(tr.nao_concluidas.mediana_min), fmtMin(tr.nao_concluidas.media_min)]]);
   if (p.anterior) {
     const an = p.anterior, ta = an.totais, ra = an.taxas;
     const var_ = (a, b) => (b ? brPct((a - b) / b) : '');
     const lin = (nome, a, b, f = (x) => x) => [nome, f(a), f(b), var_(a, b)];
     bloco(`Comparativo com o período anterior (${brData(an.periodo.de)} a ${brData(an.periodo.ate)})`, ['Indicador', 'Período atual', 'Período anterior', 'Variação'], [
       lin('Agendamentos', t.agendamentos, ta.agendamentos), lin('Ofertados', t.ofertados, ta.ofertados), lin('Encaminhados à KINTO', t.encaminhados, ta.encaminhados),
-      lin('Locações realizadas', t.concluidas, ta.concluidas), lin('Não locaram', t.nao_concluidas, ta.nao_concluidas),
+      lin('Alugaram', t.concluidas, ta.concluidas), lin('Não alugaram', t.nao_concluidas, ta.nao_concluidas),
       lin('Receita (R$)', t.receita, ta.receita, brNum), lin('Ticket médio (R$)', t.ticket_medio || 0, ta.ticket_medio || 0, brNum),
       ['Taxa de encaminhamento', brPct(r.encaminhamento), brPct(ra.encaminhamento), ''], ['Conversão total', brPct(r.conversao_total), brPct(ra.conversao_total), ''],
-      ['Tempo mediano encaminhamento → locação realizada', fmtMin(tr.concluidas.mediana_min), fmtMin(an.tempo_reserva.concluidas.mediana_min), '']]);
+      ['Tempo mediano encaminhamento → locação', fmtMin(tr.concluidas.mediana_min), fmtMin(an.tempo_reserva.concluidas.mediana_min), '']]);
   }
-  bloco('Por dia', ['Data', 'Agendamentos', 'Ofertados', 'Encaminhados à KINTO', 'Locações realizadas'], p.serie.map((d) => [brData(d.data), d.agendamentos, d.ofertados, d.encaminhados, d.concluidas]));
-  for (const [titulo, lista] of [['Motivos para não falar com a KINTO', p.motivos.recusa], ['Motivos para falar com a KINTO', p.motivos.aceite], ['Motivos de indecisão (registros antigos)', p.motivos.indeciso], ['Motivos de não atendeu', p.motivos.nao_atendeu], ['Motivos de não ofertado', p.motivos.nao_ofertado], ['Motivos de não locação', p.motivos.nao_concluida]]) {
+  bloco('Por dia', ['Data', 'Agendamentos', 'Ofertados', 'Encaminhados à KINTO', 'Alugaram'], p.serie.map((d) => [brData(d.data), d.agendamentos, d.ofertados, d.encaminhados, d.concluidas]));
+  for (const [titulo, lista] of [['Motivos para não falar com a KINTO', p.motivos.recusa], ['Motivos para falar com a KINTO', p.motivos.aceite], ['Motivos de indecisão (registros antigos)', p.motivos.indeciso], ['Motivos de não atendeu', p.motivos.nao_atendeu], ['Motivos de não ofertado', p.motivos.nao_ofertado], ['Motivos para não alugar', p.motivos.nao_concluida]]) {
     if (!lista.length && titulo.includes('registros antigos')) continue;
     const tot = lista.reduce((s, x) => s + x.n, 0);
     bloco(titulo, ['Motivo', 'Quantidade', '% do total'], lista.map((x) => [x.motivo, x.n, brPct(x.n / tot)]));
   }
-  bloco('Por loja', ['Loja', 'Agendamentos', 'Ofertados', 'Encaminhados à KINTO', 'Locações realizadas', 'Não locaram', 'Encaminhados sem locação registrada', 'Taxa de encaminhamento', '% não locaram', 'Conversão total'], p.por_loja.map((l) => [l.loja, l.agendamentos, l.ofertados, l.encaminhados, l.concluidas, l.nao_concluidas, l.enc_sem_reserva, brPct(l.encaminhamento), brPct(l.nao_conclusao), brPct(l.conversao_total)]));
+  bloco('Por loja', ['Loja', 'Agendamentos', 'Ofertados', 'Encaminhados à KINTO', 'Alugaram', 'Não alugaram', 'Encaminhados sem locação registrada', 'Taxa de encaminhamento', '% não alugaram', 'Conversão total'], p.por_loja.map((l) => [l.loja, l.agendamentos, l.ofertados, l.encaminhados, l.concluidas, l.nao_concluidas, l.enc_sem_reserva, brPct(l.encaminhamento), brPct(l.nao_conclusao), brPct(l.conversao_total)]));
   bloco('Por colaborador (contatos no período)', ['Colaborador', 'Contatos', 'Ofertas', 'Quis falar com a KINTO', 'Não quis falar', 'Não atendeu', 'Taxa de encaminhamento'], p.por_colaborador.map((c) => [c.nome, c.contatos, c.ofertas, c.aceites, c.recusas, c.nao_atendeu, brPct(c.taxa_aceite)]));
   bloco('Atendimento KINTO', ['Indicador', 'Valor'], [['Aguardando atendimento', at.aguardando], ['Maior espera agora (min)', num(at.maior_espera_min)], ['Mediana até assumir (min)', num(at.mediana_assumir_min)]]);
-  bloco('Atendimento por consultor', ['Consultor', 'Assumidos', 'Locações realizadas', 'Não locaram', 'Mediana até assumir (min)'], at.por_atendente.map((a) => [a.nome, a.assumidos, a.concluidas, a.nao_concluidas, num(a.mediana_assumir_min)]));
+  bloco('Atendimento por consultor', ['Consultor', 'Assumidos', 'Alugaram', 'Não alugaram', 'Mediana até assumir (min)'], at.por_atendente.map((a) => [a.nome, a.assumidos, a.concluidas, a.nao_concluidas, num(a.mediana_assumir_min)]));
   baixar(res, 'relatorio-painel.csv', csvLinhas(L));
 }));
 
