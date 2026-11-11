@@ -14,7 +14,11 @@ const fmtHora = (s) => (s ? fmtData(s.slice(0, 10)) + ' ' + s.slice(11, 16) : ''
 const fmtTel = (t) => { t = String(t || ''); return t.length === 11 ? `(${t.slice(0, 2)}) ${t.slice(2, 7)}-${t.slice(7)}` : t.length === 10 ? `(${t.slice(0, 2)}) ${t.slice(2, 6)}-${t.slice(6)}` : t; };
 const brl = (n) => (n == null ? '—' : n.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }));
 const pct = (n) => (n == null ? '—' : (n * 100).toFixed(1).replace('.0', '').replace('.', ',') + '%');
-const badge = (t) => `<span class="badge ${BADGE[t] || ''}">${esc(t)}</span>`;
+// Nomes exibidos. Os valores gravados (Aceitou, Ainda não decidiu, Concluída, Não concluída) não mudam.
+const ROT_PADRAO = { 'Aceitou': 'Aceitou falar com a KINTO', 'Ainda não decidiu': 'Ainda não decidiu a locação', 'Concluída': 'Locação realizada', 'Não concluída': 'Não locou' };
+const rot = (v) => ((S.cfg && S.cfg.rotulos) || ROT_PADRAO)[v] || v;
+const comRot = (lista) => lista.map((v) => ({ id: v, nome: rot(v) }));
+const badge = (t) => `<span class="badge ${BADGE[t] || ''}">${esc(rot(t))}</span>`;
 const opts = (list, sel, ph) => (ph != null ? `<option value="">${esc(ph)}</option>` : '') +
   list.map((o) => { const v = typeof o === 'object' ? o.id : o, l = typeof o === 'object' ? o.nome : o; return `<option value="${esc(v)}"${String(v) === String(sel) ? ' selected' : ''}>${esc(l)}</option>`; }).join('');
 
@@ -165,7 +169,7 @@ function avisoNovoCliente(d) {
   if (document.hidden) {
     let n = 0; clearInterval(piscaTimer);
     piscaTimer = setInterval(() => { document.title = n++ % 2 ? TITULO : '🔔 Cliente aguardando'; if (!document.hidden) { clearInterval(piscaTimer); document.title = TITULO; } }, 900);
-    try { if ('Notification' in window && Notification.permission === 'granted') new Notification('KINTO Share: cliente aguardando', { body: `${d.nome || 'Novo cliente'} ${indeciso ? 'ficou indeciso e precisa do seu contato.' : 'aceitou a oferta de locação.'}` }); } catch { /* ignora */ }
+    try { if ('Notification' in window && Notification.permission === 'granted') new Notification('KINTO Share: cliente aguardando', { body: `${d.nome || 'Novo cliente'} ${indeciso ? 'aceitou falar com a KINTO, mas ainda não decidiu a locação. Precisa do seu contato.' : 'aceitou a oferta de locação.'}` }); } catch { /* ignora */ }
   }
 }
 async function atualizaContagem() {
@@ -191,7 +195,7 @@ function viewRegistrar() {
     <div class="field"><label for="lj">Loja da revisão</label><select id="lj" name="loja_id">${opts(S.cfg.lojas, '', 'Selecione')}</select></div>
     <div class="field"><label for="nome">Nome do cliente</label><input id="nome" name="cliente_nome" autocomplete="off" maxlength="120"></div>
     <div class="field"><label for="tel">Telefone</label><input id="tel" name="telefone" inputmode="tel" autocomplete="off" placeholder="(62) 99999-9999"></div>
-    <div class="field"><label for="res">Resultado</label><select id="res" name="resultado">${opts(S.cfg.resultados, '', 'Selecione')}</select></div>
+    <div class="field"><label for="res">Resultado</label><select id="res" name="resultado">${opts(comRot(S.cfg.resultados), '', 'Selecione')}</select></div>
     <div class="field"><label for="mot">Motivo</label><select id="mot" name="motivo_id" disabled><option value="">Escolha o resultado primeiro</option></select></div>
     <div class="field"><label for="obs">Observação <span class="opt" id="obsopt">(opcional)</span></label><textarea id="obs" name="observacao" maxlength="500"></textarea></div>
     <div class="err" id="ferr"></div><button class="btn big" id="send">Enviar registro</button></form></div>`;
@@ -244,7 +248,7 @@ function viewPainel() {
   if (!S.f.de) aplicaPreset('hoje');
   const chip = (k, l) => `<button class="chip${S.f.preset === k ? ' on' : ''}" data-p="${k}">${l}</button>`;
   $('#view').innerHTML = `<div class="page-head"><div><h1>Painel</h1><div class="live"><span class="dot" id="livedot"></span><span id="livetxt">Conectando…</span></div></div>
-    <div class="actions noprint"><button class="btn alt sm" id="ex3">Relatório do painel (CSV)</button><button class="btn alt sm" id="ex1">Contatos (CSV)</button><button class="btn alt sm" id="ex2">Reservas (CSV)</button><button class="btn sm" id="ex4">Gráficos e relatório (PDF)</button></div></div>
+    <div class="actions noprint"><button class="btn alt sm" id="ex3">Relatório do painel (CSV)</button><button class="btn alt sm" id="ex1">Contatos (CSV)</button><button class="btn alt sm" id="ex2">Locações (CSV)</button><button class="btn sm" id="ex4">Gráficos e relatório (PDF)</button></div></div>
     <div class="printonly" id="pinfo"></div>
     <div class="printlogos"><img class="logo-saga" src="/img/logo-saga-toyota.png" alt="Toyota Saga"><span class="sep" aria-hidden="true"></span><img class="logo-kinto" src="/img/logo-kinto.png" alt="KINTO"></div>
     <div class="filters card" id="flt">
@@ -294,52 +298,57 @@ async function carregaPainel() {
     return `<span class="cmp ${bom ? 'good' : 'bad'}">${d > 0 ? '▲' : '▼'} ${Math.abs(d * 100).toFixed(0)}% · anterior ${fmt(b)}</span>`;
   };
   const kpi = (l, v, s, c) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s || '&nbsp;'}</div>${c || ''}</div>`;
-  const etapas = [['Agendamentos', t.agendamentos, ''], ['Contatados', t.contatados, ''], ['Ofertados', t.ofertados, ''], ['Aceitaram', t.aceitaram, 'ok'], ['Reserva concluída', t.concluidas, 'ok'], ['Reserva não concluída', t.nao_concluidas, 'bad'], ['Aceitou, sem reserva ainda', t.aceitos_sem_reserva, 'warn']];
+  const etapas = [['Agendamentos', t.agendamentos, ''], ['Contatados', t.contatados, ''], ['Ofertados', t.ofertados, ''], ['Encaminhados à KINTO', t.encaminhados, 'ok'], ['Locação realizada', t.concluidas, 'ok'], ['Não locou (falou com a KINTO)', t.nao_concluidas, 'bad'], ['Encaminhados sem locação registrada', t.enc_sem_reserva, 'warn']];
   const base = t.agendamentos || 1;
   // série diária (agrupa por semana quando passa de 31 dias)
   let serie = p.serie;
   if (serie.length > 31) {
-    const g = []; for (let i = 0; i < serie.length; i += 7) { const sl = serie.slice(i, i + 7); g.push({ data: sl[0].data, agendamentos: sl.reduce((s, x) => s + x.agendamentos, 0), aceitaram: sl.reduce((s, x) => s + x.aceitaram, 0), concluidas: sl.reduce((s, x) => s + x.concluidas, 0) }); }
+    const g = []; for (let i = 0; i < serie.length; i += 7) { const sl = serie.slice(i, i + 7); g.push({ data: sl[0].data, agendamentos: sl.reduce((s, x) => s + x.agendamentos, 0), encaminhados: sl.reduce((s, x) => s + x.encaminhados, 0), concluidas: sl.reduce((s, x) => s + x.concluidas, 0) }); }
     serie = g;
   }
-  const mx = Math.max(1, ...serie.flatMap((x) => [x.agendamentos, x.aceitaram, x.concluidas]));
+  const mx = Math.max(1, ...serie.flatMap((x) => [x.agendamentos, x.encaminhados, x.concluidas]));
   box.innerHTML = `
-    ${t.aceitos_sem_reserva ? `<div class="alert"><b>${t.aceitos_sem_reserva}</b> ${t.aceitos_sem_reserva === 1 ? 'cliente aceitou' : 'clientes aceitaram'} e ainda não ${t.aceitos_sem_reserva === 1 ? 'tem' : 'têm'} reserva registrada. <a href="#/casos" id="goac">Ver casos</a></div>` : ''}
-    <div class="kpis">${kpi('Agendamentos', t.agendamentos, '', cmp(t.agendamentos, ta && ta.agendamentos))}${kpi('Ofertados', t.ofertados, pct(r.oferta) + ' dos agendamentos', cmp(t.ofertados, ta && ta.ofertados))}${kpi('Aceitaram', t.aceitaram, pct(r.aceite) + ' dos ofertados', cmp(t.aceitaram, ta && ta.aceitaram))}
-      ${kpi('Reservas concluídas', t.concluidas, pct(r.conversao_total) + ' dos agendamentos', cmp(t.concluidas, ta && ta.concluidas))}${kpi('Não concluídas', t.nao_concluidas, r.nao_conclusao == null ? 'sem reservas registradas' : pct(r.nao_conclusao) + ' das reservas registradas', cmp(t.nao_concluidas, ta && ta.nao_concluidas, { inverso: true }))}</div>
-    <div class="kpis">${kpi('Receita', brl(t.receita), '', cmp(t.receita, ta && ta.receita, { fmt: brl }))}${kpi('Ticket médio', t.ticket_medio == null ? '—' : brl(t.ticket_medio), 'por reserva concluída', cmp(t.ticket_medio, ta && ta.ticket_medio, { fmt: brl }))}
-      ${kpi('Diárias', t.diarias, t.media_diarias == null ? 'sem reservas concluídas' : String(Math.round(t.media_diarias * 10) / 10).replace('.', ',') + ' por reserva', cmp(t.diarias, ta && ta.diarias))}${kpi('Aceite → reserva', fmtMin(tr.concluidas.mediana_min), 'mediana das concluídas', cmp(tr.concluidas.mediana_min, ant && ant.tempo_reserva.concluidas.mediana_min, { inverso: true, fmt: fmtMin }))}
-      ${kpi('Locações: Agendamento', t.locacoes_agendamento, 'aceite na 1ª ligação', cmp(t.locacoes_agendamento, ta && ta.locacoes_agendamento))}${kpi('Locações: Confirmação', t.locacoes_confirmacao, 'aceite na confirmação', cmp(t.locacoes_confirmacao, ta && ta.locacoes_confirmacao))}</div>
+    ${t.enc_sem_reserva ? `<div class="alert"><b>${t.enc_sem_reserva}</b> ${t.enc_sem_reserva === 1 ? 'cliente encaminhado à KINTO ainda não tem' : 'clientes encaminhados à KINTO ainda não têm'} locação registrada. <a href="#/casos" id="goac">Ver casos</a></div>` : ''}
+    <div class="kpis">${kpi('Agendamentos', t.agendamentos, 'clientes agendados', cmp(t.agendamentos, ta && ta.agendamentos))}${kpi('Ofertados', t.ofertados, pct(r.oferta) + ' dos agendamentos', cmp(t.ofertados, ta && ta.ofertados))}${kpi('Encaminhados à KINTO', t.encaminhados, pct(r.encaminhamento) + ' dos ofertados · aceitaram falar com a KINTO', cmp(t.encaminhados, ta && ta.encaminhados))}
+      ${kpi('Locações realizadas', t.concluidas, pct(r.conversao_total) + ' dos agendamentos', cmp(t.concluidas, ta && ta.concluidas))}${kpi('Não locaram', t.nao_concluidas, r.nao_conclusao == null ? 'sem locações registradas' : 'falaram com a KINTO e não alugaram · ' + pct(r.nao_conclusao), cmp(t.nao_concluidas, ta && ta.nao_concluidas, { inverso: true }))}</div>
+    <div class="kpis">${kpi('Receita', brl(t.receita), '', cmp(t.receita, ta && ta.receita, { fmt: brl }))}${kpi('Ticket médio', t.ticket_medio == null ? '—' : brl(t.ticket_medio), 'por locação realizada', cmp(t.ticket_medio, ta && ta.ticket_medio, { fmt: brl }))}
+      ${kpi('Diárias', t.diarias, t.media_diarias == null ? 'sem locações realizadas' : String(Math.round(t.media_diarias * 10) / 10).replace('.', ',') + ' por locação', cmp(t.diarias, ta && ta.diarias))}${kpi('Aceite → locação', fmtMin(tr.concluidas.mediana_min), 'mediana das locações realizadas', cmp(tr.concluidas.mediana_min, ant && ant.tempo_reserva.concluidas.mediana_min, { inverso: true, fmt: fmtMin }))}
+      ${kpi('Locações: Agendamento', t.locacoes_agendamento, 'aceitou falar com a KINTO no Agendamento', cmp(t.locacoes_agendamento, ta && ta.locacoes_agendamento))}${kpi('Locações: Confirmação', t.locacoes_confirmacao, 'aceitou falar com a KINTO na Confirmação', cmp(t.locacoes_confirmacao, ta && ta.locacoes_confirmacao))}</div>
     <div class="grid g2">
       <div class="card funnel"><h2>Funil</h2><div class="bars">${etapas.map(([n, v, c]) => `<div class="bar-row"><div class="name">${n}</div><div class="track"><div class="bar ${c}" data-w="${(v / base) * 100}"></div></div><div class="n">${v} · ${Math.round((v / base) * 100)}%</div></div>`).join('')}</div>
-        <div class="rates"><div class="rate"><b>${pct(r.oferta)}</b><span>Taxa de oferta</span></div><div class="rate"><b>${pct(r.aceite)}</b><span>Taxa de aceite</span></div>
-        <div class="rate"><b>${pct(r.recuperacao)}</b><span>Recuperação na confirmação</span></div><div class="rate"><b>${pct(r.aceite_reserva)}</b><span>Aceite → reserva</span></div>
+        <div class="rates"><div class="rate"><b>${pct(r.oferta)}</b><span>Taxa de oferta</span></div><div class="rate"><b>${pct(r.encaminhamento)}</b><span>Aceite da conversa</span></div>
+        <div class="rate"><b>${pct(r.recuperacao)}</b><span>Indecisos recuperados na Confirmação</span></div><div class="rate"><b>${pct(r.encaminhado_locacao)}</b><span>Conversa → locação</span></div>
         <div class="rate"><b>${pct(r.conversao_total)}</b><span>Conversão total</span></div></div></div>
       <div class="card"><h2>${p.serie.length > 31 ? 'Por semana' : 'Por dia'}</h2>
-        <div class="chart">${serie.map((x) => `<div class="col" title="${fmtData(x.data)}: ${x.agendamentos} agend., ${x.aceitaram} aceites, ${x.concluidas} reservas"><div class="stack"><div class="b" data-h="${(x.agendamentos / mx) * 100}"></div><div class="b a" data-h="${(x.aceitaram / mx) * 100}"></div><div class="b c" data-h="${(x.concluidas / mx) * 100}"></div></div><span class="lb">${x.data.slice(8)}/${x.data.slice(5, 7)}</span></div>`).join('')}</div>
-        <div class="legend"><span><i class="lg1"></i>Agendamentos</span><span><i class="lg2"></i>Aceitaram</span><span><i class="lg3"></i>Reservas concluídas</span></div></div></div>
+        <div class="chart">${serie.map((x) => `<div class="col" title="${fmtData(x.data)}: ${x.agendamentos} agend., ${x.encaminhados} encaminhados, ${x.concluidas} locações"><div class="stack"><div class="b" data-h="${(x.agendamentos / mx) * 100}"></div><div class="b a" data-h="${(x.encaminhados / mx) * 100}"></div><div class="b c" data-h="${(x.concluidas / mx) * 100}"></div></div><span class="lb">${x.data.slice(8)}/${x.data.slice(5, 7)}</span></div>`).join('')}</div>
+        <div class="legend"><span><i class="lg1"></i>Agendamentos</span><span><i class="lg2"></i>Encaminhados à KINTO</span><span><i class="lg3"></i>Locações realizadas</span></div></div></div>
     <div class="grid g3 mt">
       <div class="card"><h2>Motivos de recusa</h2>${barras(p.motivos.recusa, 'bad')}</div>
-      <div class="card"><h2>Motivos de aceite</h2>${barras(p.motivos.aceite, 'ok')}</div>
-      <div class="card"><h2>Ainda não decidiu</h2>${barras(p.motivos.indeciso, 'warn')}</div>
-      <div class="card"><h2>Locação não concluída</h2>${barras(p.motivos.nao_concluida, 'bad')}</div></div>
+      <div class="card"><h2>Motivos de aceite da conversa</h2>${barras(p.motivos.aceite, 'ok')}</div>
+      <div class="card"><h2>Ainda não decidiu a locação</h2>${barras(p.motivos.indeciso, 'warn')}</div>
+      <div class="card"><h2>Motivos de não locação</h2>${barras(p.motivos.nao_concluida, 'bad')}</div></div>
     <div class="card mt"><h2>Tempo do aceite até a reserva</h2><div class="tbl-wrap"><table><thead><tr><th>Desfecho</th><th class="num">Reservas</th><th class="num">Mediana</th><th class="num">Média</th>${ant ? '<th class="num">Mediana (período anterior)</th>' : ''}</tr></thead><tbody>
-      ${[['Concluídas', tr.concluidas, ant && ant.tempo_reserva.concluidas], ['Não concluídas', tr.nao_concluidas, ant && ant.tempo_reserva.nao_concluidas]].map(([n, x, y]) => `<tr><td>${n}</td><td class="num">${x.n}</td><td class="num">${fmtMin(x.mediana_min)}</td><td class="num">${fmtMin(x.media_min)}</td>${ant ? `<td class="num">${fmtMin(y && y.mediana_min)}</td>` : ''}</tr>`).join('')}</tbody></table></div>
-      <p class="muted small">Do primeiro "Aceitou" até o registro da reserva. Se as não concluídas demoram mais que as concluídas, a demora no atendimento pode estar custando locações.</p></div>
+      ${[['Locação realizada', tr.concluidas, ant && ant.tempo_reserva.concluidas], ['Não locou', tr.nao_concluidas, ant && ant.tempo_reserva.nao_concluidas]].map(([n, x, y]) => `<tr><td>${n}</td><td class="num">${x.n}</td><td class="num">${fmtMin(x.mediana_min)}</td><td class="num">${fmtMin(x.media_min)}</td>${ant ? `<td class="num">${fmtMin(y && y.mediana_min)}</td>` : ''}</tr>`).join('')}</tbody></table></div>
+      <p class="muted small">Do primeiro aceite (falar com a KINTO) até o registro da locação. Se quem não locou demora mais que quem locou, a demora no atendimento pode estar custando locações.</p></div>
     <div class="grid mt">
-      <div class="card"><h2>Por loja</h2><div class="tbl-wrap"><table><thead><tr><th>Loja</th><th class="num">Agend.</th><th class="num">Ofertados</th><th class="num">Aceitaram</th><th class="num">Concluídas</th><th class="num">Não concl.</th><th class="num">Sem reserva</th><th class="num">Conversão</th></tr></thead><tbody>
-        ${p.por_loja.map((l) => `<tr><td>${esc(l.loja)}</td><td class="num">${l.agendamentos}</td><td class="num">${l.ofertados}</td><td class="num">${l.aceitaram}</td><td class="num">${l.concluidas}</td><td class="num">${l.nao_concluidas}</td><td class="num">${l.aceitos_sem_reserva}</td><td class="num">${pct(l.conversao_total)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">Sem registros no período</td></tr>'}</tbody></table></div></div>
-      <div class="card"><h2>Por colaborador <span class="muted small">(contatos no período)</span></h2><div class="tbl-wrap"><table><thead><tr><th>Colaborador</th><th class="num">Contatos</th><th class="num">Ofertas</th><th class="num">Aceites</th><th class="num">Recusas</th><th class="num">Não atend.</th><th class="num">Aceite</th></tr></thead><tbody>
+      <div class="card"><h2>Por loja</h2><div class="tbl-wrap"><table><thead><tr><th>Loja</th><th class="num">Agend.</th><th class="num">Ofertados</th><th class="num">Encaminhados</th><th class="num">Locações</th><th class="num">Não locaram</th><th class="num">Sem locação</th><th class="num">Conversão</th></tr></thead><tbody>
+        ${p.por_loja.map((l) => `<tr><td>${esc(l.loja)}</td><td class="num">${l.agendamentos}</td><td class="num">${l.ofertados}</td><td class="num">${l.encaminhados}</td><td class="num">${l.concluidas}</td><td class="num">${l.nao_concluidas}</td><td class="num">${l.enc_sem_reserva}</td><td class="num">${pct(l.conversao_total)}</td></tr>`).join('') || '<tr><td colspan="8" class="empty">Sem registros no período</td></tr>'}</tbody></table></div></div>
+      <div class="card"><h2>Por colaborador <span class="muted small">(contatos no período)</span></h2><div class="tbl-wrap"><table><thead><tr><th>Colaborador</th><th class="num">Contatos</th><th class="num">Ofertas</th><th class="num">Aceitou falar</th><th class="num">Recusas</th><th class="num">Não atend.</th><th class="num">Aceite da conversa</th></tr></thead><tbody>
         ${p.por_colaborador.map((c) => `<tr class="${c.contatos ? '' : 'zero'}"><td>${esc(c.nome)}</td><td class="num">${c.contatos}</td><td class="num">${c.ofertas}</td><td class="num">${c.aceites}</td><td class="num">${c.recusas}</td><td class="num">${c.nao_atendeu}</td><td class="num">${pct(c.taxa_aceite)}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">Nenhum colaborador cadastrado</td></tr>'}</tbody></table></div></div></div>
     <div class="card mt"><h2>Atendimento KINTO</h2>
       <div class="rates"><div class="rate"><b>${p.atendimento.aguardando}</b><span>Aguardando atendimento</span></div>
       <div class="rate"><b>${p.atendimento.maior_espera_min == null ? '—' : p.atendimento.maior_espera_min + ' min'}</b><span>Maior espera agora</span></div>
       <div class="rate"><b>${p.atendimento.mediana_assumir_min == null ? '—' : p.atendimento.mediana_assumir_min + ' min'}</b><span>Mediana até assumir</span></div></div>
-      <div class="tbl-wrap mt"><table><thead><tr><th>Consultor</th><th class="num">Assumidos</th><th class="num">Concluídas</th><th class="num">Não concluídas</th><th class="num">Mediana até assumir</th></tr></thead><tbody>
+      <div class="tbl-wrap mt"><table><thead><tr><th>Consultor</th><th class="num">Assumidos</th><th class="num">Locações</th><th class="num">Não locaram</th><th class="num">Mediana até assumir</th></tr></thead><tbody>
       ${p.atendimento.por_atendente.map((a) => `<tr><td>${esc(a.nome)}</td><td class="num">${a.assumidos}</td><td class="num">${a.concluidas}</td><td class="num">${a.nao_concluidas}</td><td class="num">${a.mediana_assumir_min == null ? '—' : a.mediana_assumir_min + ' min'}</td></tr>`).join('') || '<tr><td colspan="5" class="empty">Nenhum atendimento no período</td></tr>'}</tbody></table></div></div>
-    <p class="muted small">Contatados = casos com alguma resposta diferente de "Não atendeu". Ofertados = Aceitou, Recusou ou Ainda não decidiu. Receita e reservas vêm do registro de locação feito pelo time KINTO (ou pelo gestor).${ant ? ` As setas comparam com ${fmtData(ant.periodo.de)} a ${fmtData(ant.periodo.ate)} (período anterior de mesmo tamanho); se o período atual ainda está em andamento, a comparação é com o anterior completo.` : ''}</p>`;
+    <details class="mt"><summary><b>Como ler este painel</b></summary>
+      <p class="muted small"><b>Agendamentos</b>: clientes com revisão agendada. <b>Contatados</b>: clientes com alguma resposta diferente de "Não atendeu". <b>Ofertados</b>: clientes que ouviram a oferta (aceitou, ainda não decidiu ou recusou).</p>
+      <p class="muted small"><b>Encaminhados à KINTO</b>: clientes que aceitaram falar com a KINTO, incluindo os que ainda não decidiram a locação. Cada cliente conta uma vez. É a fila do time KINTO.</p>
+      <p class="muted small"><b>Locações realizadas</b>: clientes que alugaram (registro feito pelo time KINTO ou pelo gestor). <b>Não locaram</b>: falaram com a KINTO e a locação não aconteceu. <b>Encaminhados sem locação registrada</b>: ainda aguardando atendimento ou sem desfecho.</p>
+      <p class="muted small">Conversa → locação = locações ÷ encaminhados. Conversão total = locações ÷ agendamentos. Aceitar falar com a KINTO ainda não é locação.</p></details>
+    <p class="muted small">${ant ? ` As setas comparam com ${fmtData(ant.periodo.de)} a ${fmtData(ant.periodo.ate)} (período anterior de mesmo tamanho); se o período atual ainda está em andamento, a comparação é com o anterior completo.` : ''}</p>`;
   applyBars(box);
-  const go = $('#goac'); if (go) go.addEventListener('click', () => { S.c.filtro = 'aceitos_sem_reserva'; });
+  const go = $('#goac'); if (go) go.addEventListener('click', () => { S.c.filtro = 'encaminhados_sem_reserva'; });
   marcaLive(p.gerado_em.slice(11, 19));
 }
 
@@ -348,7 +357,7 @@ function blocoReserva(rv0, atendimento, bloqueado = false) {
   const rv = rv0 || {};
   return `<div class="sec"><h3>Locação ${rv0 ? badge(rv.status) : ''}</h3>${atendimento ? `<div class="muted small mb">Atendido por ${esc(atendimento.nome)} desde ${fmtHora(atendimento.assumido_em)}</div>` : ''}
     <form data-f="reserva"><fieldset ${bloqueado ? 'disabled' : ''}><div class="row">
-      <div class="field"><label>Status</label><select name="status" id="rs">${opts(S.cfg.status_reserva, rv.status, 'Selecione')}</select></div>
+      <div class="field"><label>Situação da locação</label><select name="status" id="rs">${opts(comRot(S.cfg.status_reserva), rv.status, 'Selecione')}</select></div>
       <div class="field" id="rmn"><label>Motivo da não conclusão</label><select name="motivo_nao_conclusao">${opts(S.cfg.motivos_nao_conclusao, rv.motivo_nao_conclusao, 'Selecione')}</select></div></div>
       <div class="row"><div class="field"><label>Retirada</label><input type="date" name="retirada" value="${rv.retirada || ''}"></div><div class="field"><label>Devolução</label><input type="date" name="devolucao" value="${rv.devolucao || ''}"></div></div>
       <div class="row"><div class="field"><label>Modelo</label><input name="modelo" list="mods" value="${esc(rv.modelo || '')}"><datalist id="mods"><option>Yaris</option><option>Yaris Cross</option><option>Corolla</option><option>Corolla Cross</option></datalist></div>
@@ -424,8 +433,8 @@ async function abreFicha(id) {
       <div class="ficha-tel">${fmtTel(c.telefone)}</div>
       <div class="muted small">${esc(c.loja)} · revisão em ${fmtData(c.data_revisao)}</div></div>
       ${d.aceite.origem === 'Ainda não decidiu'
-        ? `<div class="hint warnbox"><b>Ainda não decidiu</b> (desde ${fmtHora(d.aceite.aceito_em)}) · registrado por ${esc(d.aceite.registrado_por || '')}<br>Motivo: ${esc(d.aceite.motivo || '')}${d.aceite.observacao ? '<br>Obs.: ' + esc(d.aceite.observacao) : ''}<br><b>Entre em contato com o cliente para apresentar a locação.</b></div>`
-        : `<div class="hint"><b>Aceitou a locação</b> em ${fmtHora(d.aceite.aceito_em)} · registrado por ${esc(d.aceite.registrado_por || '')}<br>Motivo: ${esc(d.aceite.motivo || '')}${d.aceite.observacao ? '<br>Obs.: ' + esc(d.aceite.observacao) : ''}</div>`}
+        ? `<div class="hint warnbox"><b>Aceitou falar com a KINTO, ainda não decidiu a locação</b> (desde ${fmtHora(d.aceite.aceito_em)}) · registrado por ${esc(d.aceite.registrado_por || '')}<br>Motivo: ${esc(d.aceite.motivo || '')}${d.aceite.observacao ? '<br>Obs.: ' + esc(d.aceite.observacao) : ''}<br><b>Entre em contato com o cliente para apresentar a locação.</b></div>`
+        : `<div class="hint"><b>Aceitou falar com a KINTO</b> em ${fmtHora(d.aceite.aceito_em)} · registrado por ${esc(d.aceite.registrado_por || '')}<br>Motivo: ${esc(d.aceite.motivo || '')}${d.aceite.observacao ? '<br>Obs.: ' + esc(d.aceite.observacao) : ''}</div>`}
       ${a ? `<div class="hint ok">Em atendimento por <b>${esc(a.nome)}</b> desde ${fmtHora(a.assumido_em)}</div>` : ''}
       <div class="actions between">${botoes}${reat}</div>
       ${a || !kinto ? blocoReserva(d.reserva, null, !pode) : '<p class="muted small">Assuma o cliente para registrar a locação.</p>'}</div>`;
@@ -448,10 +457,10 @@ async function abreFicha(id) {
 
 /* ---------------- casos ---------------- */
 function viewCasos() {
-  $('#view').innerHTML = `<div class="page-head"><div><h1>Casos</h1><div class="muted small">Um caso é um cliente com uma revisão agendada. Clique para ver contatos e registrar a reserva.</div></div>
+  $('#view').innerHTML = `<div class="page-head"><div><h1>Casos</h1><div class="muted small">Um caso é um cliente com uma revisão agendada. Clique para ver contatos e registrar a locação.</div></div>
     <div class="actions"><button class="btn alt sm" id="exc">Exportar casos (CSV)</button></div></div>
     <div class="filters card"><div class="f grow"><label>Buscar por nome ou telefone</label><input id="cq" value="${esc(S.c.q)}" placeholder="Ex.: Maria ou 98888"></div>
-      <div class="f"><label>Situação</label><select id="cf"><option value="">Todos</option><option value="aceitos_sem_reserva">Aceitaram, sem reserva</option><option value="com_reserva">Com reserva registrada</option></select></div>
+      <div class="f"><label>Situação</label><select id="cf"><option value="">Todos</option><option value="encaminhados_sem_reserva">Encaminhados à KINTO, sem locação registrada</option><option value="com_reserva">Com locação registrada</option></select></div>
       <div class="f"><label>Loja</label><select id="cl">${opts(S.cfg.lojas, S.c.loja, 'Todas')}</select></div></div>
     <div class="card"><div class="tbl-wrap" id="clist"><div class="empty">Carregando…</div></div></div>`;
   $('#cf').value = S.c.filtro;
@@ -466,7 +475,7 @@ async function carregaCasos() {
   const box = $('#clist'); if (!box) return;
   let rows;
   try { rows = await api(`/casos?q=${encodeURIComponent(S.c.q)}&filtro=${S.c.filtro}&loja=${S.c.loja}`); } catch (e) { return; }
-  box.innerHTML = rows.length ? `<table><thead><tr><th>Cliente</th><th>Telefone</th><th>Revisão</th><th>Loja</th><th class="num">Contatos</th><th>Último resultado</th><th>Atendimento KINTO</th><th>Reserva</th></tr></thead><tbody>
+  box.innerHTML = rows.length ? `<table><thead><tr><th>Cliente</th><th>Telefone</th><th>Revisão</th><th>Loja</th><th class="num">Contatos</th><th>Último resultado</th><th>Atendimento KINTO</th><th>Locação</th></tr></thead><tbody>
     ${rows.map((c) => `<tr class="click" data-id="${c.id}"><td>${esc(c.cliente_nome)}</td><td class="nowrap">${fmtTel(c.telefone)}</td><td>${fmtData(c.data_revisao)}</td><td>${esc(c.loja)}</td><td class="num">${c.n_contatos}</td><td>${c.ultimo_resultado ? badge(c.ultimo_resultado) : ''}</td><td>${esc(c.atendente || '')}</td><td>${c.reserva_status ? badge(c.reserva_status) : '<span class="muted">—</span>'}</td></tr>`).join('')}</tbody></table>`
     : '<div class="empty">Nenhum caso encontrado</div>';
   $$('tr.click', box).forEach((tr) => tr.addEventListener('click', () => abreCaso(Number(tr.dataset.id))));
@@ -486,7 +495,7 @@ async function abreCaso(id) {
     const lin = d.contatos.map((t) => {
       if (editando === t.id) {
         return `<div class="it"><form data-f="contato" data-id="${t.id}"><div class="row"><div class="field"><label>Etapa</label><select name="etapa">${opts(S.cfg.etapas, t.etapa)}</select></div>
-          <div class="field"><label>Resultado</label><select name="resultado" id="er">${opts(S.cfg.resultados, t.resultado)}</select></div></div>
+          <div class="field"><label>Resultado</label><select name="resultado" id="er">${opts(comRot(S.cfg.resultados), t.resultado)}</select></div></div>
           <div class="field"><label>Motivo</label><select name="motivo_id" id="em">${motivosDe(t.resultado).map((x) => `<option value="${x.id}"${x.id === t.motivo_id ? ' selected' : ''}>${esc(x.descricao)}</option>`).join('')}</select></div>
           <div class="field"><label>Observação</label><textarea name="observacao">${esc(t.observacao || '')}</textarea></div>
           <div class="actions"><button class="btn sm">Salvar</button><button type="button" class="btn alt sm" data-act="cancel-edit">Cancelar</button></div></form></div>`;
@@ -641,7 +650,7 @@ async function adminUsuarios() {
 }
 async function adminLojas() {
   const ls = await api('/lojas'); const box = $('#abody');
-  box.innerHTML = `<div class="card"><h2>Lojas</h2><p class="muted small">O e-mail de alerta recebe o aviso quando um cliente que aceitou fica sem atendimento por ${S.cfg.escalona_minutos} minutos em horário comercial (use a caixa compartilhada do time KINTO da loja).</p>
+  box.innerHTML = `<div class="card"><h2>Lojas</h2><p class="muted small">O e-mail de alerta recebe o aviso quando um cliente encaminhado à KINTO fica sem atendimento por ${S.cfg.escalona_minutos} minutos em horário comercial (use a caixa compartilhada do time KINTO da loja).</p>
     ${ls.map((l) => `<form class="lojaf${l.ativo ? '' : ' off'}" data-l="${l.id}"><div class="lj-nome"><b>${esc(l.nome)}</b> <span class="muted small">${esc(l.cidade || '')}</span></div>
       <input type="email" name="email_alerta" value="${esc(l.email_alerta || '')}" placeholder="E-mail de alerta da equipe KINTO" aria-label="E-mail de alerta de ${esc(l.nome)}">
       <button class="btn alt sm">Salvar e-mail</button><button type="button" class="btn alt sm" data-ed="${l.id}">Editar</button><button type="button" class="btn alt sm" data-t="${l.id}" data-a="${l.ativo ? 0 : 1}">${l.ativo ? 'Desativar' : 'Reativar'}</button></form>`).join('')}
@@ -664,7 +673,7 @@ async function adminLojas() {
 }
 async function adminMotivos() {
   const ms = await api('/motivos'); const box = $('#abody');
-  box.innerHTML = `<p class="muted small">Desativar um motivo o remove do menu, mas ele continua nos registros antigos. "Exige obs." obriga o colaborador a descrever o motivo.</p><div class="grid g2">${S.cfg.resultados.map((res) => `<div class="card"><h2>${esc(res)}</h2>
+  box.innerHTML = `<p class="muted small">Desativar um motivo o remove do menu, mas ele continua nos registros antigos. "Exige obs." obriga o colaborador a descrever o motivo.</p><div class="grid g2">${S.cfg.resultados.map((res) => `<div class="card"><h2>${esc(rot(res))}</h2>
     ${ms.filter((m) => m.resultado === res).map((m) => `<div class="mini${m.ativo ? '' : ' off'}"><div>${esc(m.descricao)}</div><label class="small nowrap nomargin"><input type="checkbox" class="chk" data-o="${m.id}" ${m.exige_obs ? 'checked' : ''}> Exige obs.</label>
       <button class="btn alt sm" data-r="${m.id}" data-d="${esc(m.descricao)}">Renomear</button><button class="btn alt sm" data-v="${m.id}" data-a="${m.ativo ? 0 : 1}">${m.ativo ? 'Desativar' : 'Reativar'}</button></div>`).join('')}
     <form class="actions sec" data-n="${esc(res)}"><input name="descricao" placeholder="Novo motivo" class="grow" required><button class="btn sm">Adicionar</button></form></div>`).join('')}</div>`;

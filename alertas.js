@@ -43,7 +43,7 @@ async function escalar(agora = nowBR(), tr = transporte()) {
     if (!tr || !para) { semConfiguracao++; continue; }
     const espera = minutosEntre(r.aceito_em, agora);
     const texto = [
-      `Há ${espera} minutos um cliente ${r.aceitou ? 'aceitou o KINTO Share' : 'ficou de decidir sobre o KINTO Share e precisa de contato'} e ninguém assumiu o atendimento.`,
+      `Há ${espera} minutos um cliente ${r.aceitou ? 'aceitou falar com a KINTO sobre o KINTO Share' : 'aceitou falar com a KINTO, mas ainda não decidiu a locação do KINTO Share,'} e ninguém assumiu o atendimento.`,
       `Cliente: ${r.cliente_nome}`, `Loja: ${r.loja}`,
       `Revisão em: ${r.data_revisao.slice(8)}/${r.data_revisao.slice(5, 7)}/${r.data_revisao.slice(0, 4)}`,
       '', `Abra o sistema para assumir o atendimento${process.env.APP_URL ? ': ' + process.env.APP_URL : '.'}`,
