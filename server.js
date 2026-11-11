@@ -316,7 +316,7 @@ function painel(q, { anterior = true } = {}) {
 
   const lojas = db.prepare('SELECT id, nome FROM lojas').all();
   const nomeLoja = new Map(lojas.map((l) => [l.id, l.nome]));
-  const zera = () => ({ concluidas_aceitos: 0, agendamentos: 0, contatados: 0, ofertados: 0, aceitaram: 0, recusaram: 0, indecisos: 0, recuperados: 0, resistentes: 0, concluidas: 0, nao_concluidas: 0, aceitos_sem_reserva: 0, encaminhados: 0, enc_ofertados: 0, enc_sem_registro: 0, concluidas_enc: 0, enc_sem_reserva: 0 });
+  const zera = () => ({ concluidas_aceitos: 0, agendamentos: 0, contatados: 0, ofertados: 0, aceitaram: 0, recusaram: 0, indecisos: 0, recuperados: 0, resistentes: 0, concluidas: 0, nao_concluidas: 0, aceitos_sem_reserva: 0, encaminhados: 0, enc_ofertados: 0, enc_sem_registro: 0, concluidas_enc: 0, enc_sem_reserva: 0, enc_aguardando: 0, enc_em_atend: 0 });
   const tot = zera();
   const porLoja = new Map();
   const dias = new Map();
@@ -360,7 +360,7 @@ function painel(q, { anterior = true } = {}) {
       if (f.encaminhado) alvo.encaminhados++;
       if (f.encaminhado && f.ofertado) alvo.enc_ofertados++;
       if (f.sem_registro) alvo.enc_sem_registro++;
-      if (f.encaminhado && !rv) alvo.enc_sem_reserva++;
+      if (f.encaminhado && !rv) { alvo.enc_sem_reserva++; if (comAtend.has(c.id)) alvo.enc_em_atend++; else alvo.enc_aguardando++; }
       if (f.encaminhado && rv && rv.status === 'Concluída') alvo.concluidas_enc++;
     }
     const dia = dias.get(c.data_local);
@@ -502,6 +502,8 @@ function filtrosCasos(query) {
   if (Number(query.loja)) { w.push('c.loja_id = ?'); p.push(Number(query.loja)); }
   if (query.filtro === 'sem_registro_encaminhamento') w.push(`(r.id IS NOT NULL OR a.id IS NOT NULL) AND NOT ${paraKinto('c')}`);
   if (query.filtro === 'encaminhados_sem_reserva') w.push(`r.id IS NULL AND ${paraKinto('c')}`);
+  if (query.filtro === 'aguardando') w.push(`r.id IS NULL AND a.id IS NULL AND ${paraKinto('c')}`);
+  if (query.filtro === 'em_atendimento') w.push('r.id IS NULL AND a.id IS NOT NULL');
   if (query.filtro === 'aceitos_sem_reserva') w.push(`r.id IS NULL AND ${temAceite('c')}`);
   if (query.filtro === 'com_reserva') w.push('r.id IS NOT NULL');
   return { where: w.length ? 'WHERE ' + w.join(' AND ') : '', p };
@@ -793,7 +795,7 @@ app.get('/api/export/painel.csv', auth, gestor, wrap((req, res) => {
   bloco('Relatório do painel | Revisão Premium', null, [['Período', `${brData(p.periodo.de)} a ${brData(p.periodo.ate)}`], ['Loja', lojaNome || 'Todas'], ['Colaborador', colabNome || 'Todos'], ['Gerado em', brHora(p.gerado_em)]]);
   bloco('Indicadores', ['Indicador', 'Valor'], [['Agendamentos', t.agendamentos], ['Contatados', t.contatados], ['Ofertados', t.ofertados], ['Encaminhados à KINTO (quiseram falar com a KINTO)', t.encaminhados], ['Não quiseram falar com a KINTO', t.recusaram],
     ['Recuperados na Confirmação (disseram não e depois quiseram falar)', t.recuperados], ['Registros antigos "Ainda não decidiu" (histórico)', t.indecisos], ['Alugaram', t.concluidas], ['Não alugaram (falaram com a KINTO e não alugaram)', t.nao_concluidas],
-    ['Encaminhados sem locação registrada', t.enc_sem_reserva], ['Encaminhados sem o registro "Quer falar com a KINTO" (revisar)', t.enc_sem_registro], ['Diárias', t.diarias], ['Receita (R$)', brNum(t.receita)],
+    ['Aguardando atendimento (encaminhados)', t.enc_aguardando], ['Em atendimento (encaminhados)', t.enc_em_atend], ['Encaminhados sem o registro "Quer falar com a KINTO" (revisar)', t.enc_sem_registro], ['Diárias', t.diarias], ['Receita (R$)', brNum(t.receita)],
     ['Alugaram — quis falar com a KINTO no Agendamento', t.locacoes_agendamento], ['Alugaram — quis falar com a KINTO na Confirmação', t.locacoes_confirmacao],
     ['Ticket médio por locação (R$)', brNum(t.ticket_medio)], ['Média de diárias por locação', num(t.media_diarias == null ? null : Math.round(t.media_diarias * 10) / 10)]]);
   bloco('Taxas', ['Taxa', 'Valor'], [['Taxa de oferta (ofertados / agendamentos)', brPct(r.oferta)], ['Taxa de encaminhamento (encaminhados / ofertados)', brPct(r.encaminhamento)], ['Recuperação na Confirmação (recuperados / quem disse não)', brPct(r.recuperacao)],
@@ -819,7 +821,7 @@ app.get('/api/export/painel.csv', auth, gestor, wrap((req, res) => {
     const tot = lista.reduce((s, x) => s + x.n, 0);
     bloco(titulo, ['Motivo', 'Quantidade', '% do total'], lista.map((x) => [x.motivo, x.n, brPct(x.n / tot)]));
   }
-  bloco('Por loja', ['Loja', 'Agendamentos', 'Ofertados', 'Encaminhados à KINTO', 'Alugaram', 'Não alugaram', 'Encaminhados sem locação registrada', 'Taxa de encaminhamento', '% não alugaram', 'Conversão total'], p.por_loja.map((l) => [l.loja, l.agendamentos, l.ofertados, l.encaminhados, l.concluidas, l.nao_concluidas, l.enc_sem_reserva, brPct(l.encaminhamento), brPct(l.nao_conclusao), brPct(l.conversao_total)]));
+  bloco('Por loja', ['Loja', 'Agendamentos', 'Ofertados', 'Encaminhados à KINTO', 'Alugaram', 'Não alugaram', 'Aguardando atendimento', 'Em atendimento', 'Taxa de encaminhamento', '% não alugaram', 'Conversão total'], p.por_loja.map((l) => [l.loja, l.agendamentos, l.ofertados, l.encaminhados, l.concluidas, l.nao_concluidas, l.enc_aguardando, l.enc_em_atend, brPct(l.encaminhamento), brPct(l.nao_conclusao), brPct(l.conversao_total)]));
   bloco('Por colaborador (contatos no período)', ['Colaborador', 'Contatos', 'Ofertas', 'Quis falar com a KINTO', 'Não quis falar', 'Não atendeu', 'Taxa de encaminhamento'], p.por_colaborador.map((c) => [c.nome, c.contatos, c.ofertas, c.aceites, c.recusas, c.nao_atendeu, brPct(c.taxa_aceite)]));
   bloco('Atendimento KINTO', ['Indicador', 'Valor'], [['Aguardando atendimento', at.aguardando], ['Maior espera agora (min)', num(at.maior_espera_min)], ['Mediana até assumir (min)', num(at.mediana_assumir_min)]]);
   bloco('Atendimento por consultor', ['Consultor', 'Assumidos', 'Alugaram', 'Não alugaram', 'Mediana até assumir (min)'], at.por_atendente.map((a) => [a.nome, a.assumidos, a.concluidas, a.nao_concluidas, num(a.mediana_assumir_min)]));

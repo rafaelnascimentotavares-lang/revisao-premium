@@ -550,7 +550,7 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.ok(cfg3.motivos_nao_conclusao.includes('Sem contato com o cliente'));
     assert.ok(['Concluída', 'Não concluída'].every((v) => cfg3.status_reserva.includes(v)), 'valores gravados intactos');
   });
-  await t('os números fecham: Encaminhados = Alugaram + Não alugaram + Sem locação; locação sem "Quer falar" é sinalizada', async () => {
+  await t('os números fecham: Encaminhados = Aguardando + Em atendimento + Alugaram + Não alugaram; locação sem "Quer falar" é sinalizada', async () => {
     const ant = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data.totais;
     await reg({ cliente_nome: 'Sem Aceite 1', telefone: '62 91111-0001', resultado: 'Recusou', motivo_id: mot('Recusou', 'Preço') });
     await reg({ cliente_nome: 'Sem Aceite 2', telefone: '62 91111-0002', resultado: 'Recusou', motivo_id: mot('Recusou', 'Preço') });
@@ -560,7 +560,8 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     }
     const p = (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data;
     const x = p.totais;
-    assert.strictEqual(x.encaminhados, x.concluidas + x.nao_concluidas + x.enc_sem_reserva, 'identidade do funil');
+    assert.strictEqual(x.encaminhados, x.concluidas + x.nao_concluidas + x.enc_aguardando + x.enc_em_atend, 'identidade do funil');
+    assert.strictEqual(x.enc_sem_reserva, x.enc_aguardando + x.enc_em_atend);
     assert.strictEqual(x.encaminhados, ant.encaminhados + 2, 'quem tem locação conta como encaminhado');
     assert.strictEqual(x.enc_sem_registro, ant.enc_sem_registro + 2, 'sinalizados para revisão');
     assert.ok(x.nao_concluidas <= x.encaminhados && x.concluidas <= x.encaminhados);
@@ -569,6 +570,22 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.ok(rev1.length >= 2 && rev1.every((c) => c.reserva_status || c.atendente), 'filtro de revisão');
     const rel = (await call(gest, 'GET', `/api/export/painel.csv?de=${rev}&ate=${rev}`)).data;
     assert.ok(rel.includes('Quer falar com a KINTO"" (revisar)'), 'aparece no relatório');
+  });
+  await t('Aguardando / Em atendimento: assumir move de um para o outro e devolver volta; a conta continua fechando', async () => {
+    const pn = async () => (await call(gest, 'GET', `/api/painel?de=${rev}&ate=${rev}`)).data.totais;
+    const a0 = await pn();
+    assert.strictEqual(a0.encaminhados, a0.concluidas + a0.nao_concluidas + a0.enc_aguardando + a0.enc_em_atend);
+    assert.strictEqual((await call(k3, 'POST', `/api/fila/${G}/assumir`)).status, 200);
+    const a1 = await pn();
+    assert.strictEqual(a1.enc_em_atend, a0.enc_em_atend + 1); assert.strictEqual(a1.enc_aguardando, a0.enc_aguardando - 1);
+    assert.strictEqual(a1.encaminhados, a0.encaminhados, 'total de encaminhados não muda');
+    const fa = (await call(gest, 'GET', '/api/casos?filtro=em_atendimento')).data;
+    assert.ok(fa.some((c) => c.id === G) && fa.every((c) => !c.reserva_status), 'filtro Em atendimento');
+    assert.ok(!(await call(gest, 'GET', '/api/casos?filtro=aguardando')).data.some((c) => c.id === G));
+    assert.strictEqual((await call(k3, 'POST', `/api/fila/${G}/liberar`)).status, 200);
+    const a2 = await pn();
+    assert.strictEqual(a2.enc_aguardando, a0.enc_aguardando); assert.strictEqual(a2.enc_em_atend, a0.enc_em_atend);
+    assert.ok((await call(gest, 'GET', '/api/casos?filtro=aguardando')).data.some((c) => c.id === G), 'volta a Aguardando');
   });
   await t('excluir caso: só administrador, exige confirmação, apaga tudo do caso, audita e faz backup', async () => {
     const r = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Caso Excluir', telefone: '62 94444-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
