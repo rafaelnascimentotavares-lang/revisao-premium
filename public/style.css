@@ -199,3 +199,17 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
   .bar, .col .b, .legend i, .kpi, .rate, .track, .badge { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
   .grid { gap: 8px; }
 }
+
+/* diário por colaborador */
+.diario table { min-width: 720px; }
+.diario th.nm { text-transform: none; letter-spacing: 0; font-size: 14px; color: var(--text); position: sticky; left: 0; background: #fff; z-index: 1; }
+.diario th.num { padding: 8px 6px; } .diario td.num { padding: 8px 6px; min-width: 38px; }
+.diario .fds { background: var(--gray-bg); color: var(--muted); }
+.diario .vazio { background: var(--bad-bg); color: var(--bad); font-weight: 700; }
+.diario .fut { background: transparent; }
+.diario .tot { background: var(--soft); }
+.diario tfoot th, .diario tfoot td { border-top: 2px solid var(--line); border-bottom: 0; }
+.cellbtn { border: 0; background: none; font: inherit; color: var(--teal, #0d6e8a); font-weight: 700; cursor: pointer; padding: 2px 4px; border-radius: 6px; text-decoration: underline; text-decoration-style: dotted; }
+.cellbtn:hover { background: var(--soft); }
+.chk { display: flex; align-items: center; gap: 6px; font-size: 14px; text-transform: none; letter-spacing: 0; color: var(--text); padding-top: 4px; }
+.chk input { width: 18px; height: 18px; padding: 0; } .chk { white-space: nowrap; }

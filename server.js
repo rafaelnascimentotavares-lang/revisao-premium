@@ -754,6 +754,65 @@ app.put('/api/fila/:id/reserva', auth, filaAcesso, wrap((req, res) => {
   res.json(fichaFila(id, req.user));
 }));
 
+// ---------- relatório dia a dia por colaborador (equipe de agendamento) ----------
+function intervaloDiario(q) {
+  let de = isDate(q.de) ? q.de : hoje().slice(0, 8) + '01', ate = isDate(q.ate) ? q.ate : hoje();
+  if (ate < de) [de, ate] = [ate, de];
+  if (addDays(de, 61) < ate) de = addDays(ate, -61); // no máximo 62 dias
+  return { de, ate };
+}
+const COLS_DIA = ['lancamentos', 'ofertados', 'quer_falar', 'nao_quer_falar', 'nao_atendeu', 'nao_ofertado'];
+function relatorioDiario(q) {
+  const { de, ate } = intervaloDiario(q);
+  const loja = Number(q.loja) || null;
+  const w = ['t.ativo = 1', 't.data_local BETWEEN ? AND ?']; const p = [de, ate];
+  if (loja) { w.push('t.loja_id = ?'); p.push(loja); }
+  const rows = db.prepare(`SELECT t.usuario_id, t.data_local, t.resultado, t.criado_em FROM contatos t JOIN usuarios u ON u.id = t.usuario_id
+    WHERE u.perfil = 'colaborador' AND ${w.join(' AND ')}`).all(...p);
+  const zera = () => Object.fromEntries(COLS_DIA.map((c) => [c, 0]));
+  const dias = []; for (let d = de; d <= ate; d = addDays(d, 1)) dias.push(d);
+  const colabs = db.prepare("SELECT id, nome, ativo FROM usuarios WHERE perfil = 'colaborador' ORDER BY nome").all();
+  const por = new Map(colabs.map((u) => [u.id, { id: u.id, nome: u.nome, ativo: u.ativo, dias: {}, total: zera(), primeiro: {}, ultimo: {} }]));
+  for (const t of rows) {
+    const c = por.get(t.usuario_id); if (!c) continue;
+    const d = c.dias[t.data_local] || (c.dias[t.data_local] = zera());
+    for (const alvo of [d, c.total]) {
+      alvo.lancamentos++;
+      if (D.OFERTADOS.includes(t.resultado)) alvo.ofertados++;
+      if (t.resultado === 'Aceitou') alvo.quer_falar++;
+      if (t.resultado === 'Recusou') alvo.nao_quer_falar++;
+      if (t.resultado === 'Ainda não decidiu') alvo.quer_falar++; // registro antigo: conta como quer falar
+      if (t.resultado === 'Não atendeu') alvo.nao_atendeu++;
+      if (t.resultado === 'Não ofertado') alvo.nao_ofertado++;
+    }
+    const hh = String(t.criado_em).slice(11, 16);
+    if (!c.primeiro[t.data_local] || hh < c.primeiro[t.data_local]) c.primeiro[t.data_local] = hh;
+    if (!c.ultimo[t.data_local] || hh > c.ultimo[t.data_local]) c.ultimo[t.data_local] = hh;
+  }
+  // ativos aparecem sempre (mesmo com zero); inativos só se lançaram algo no período
+  const lista = [...por.values()].filter((c) => c.ativo || c.total.lancamentos).map((c) => {
+    const ativosDias = Object.keys(c.dias).length;
+    return { id: c.id, nome: c.nome, dias: c.dias, total: c.total, primeiro: c.primeiro, ultimo: c.ultimo, dias_com_lancamento: ativosDias,
+      taxa_oferta: pct(c.total.ofertados, c.total.lancamentos), taxa_encaminhamento: pct(c.total.quer_falar, c.total.ofertados) };
+  });
+  const totalDia = {}; for (const d of dias) { totalDia[d] = zera(); for (const c of lista) if (c.dias[d]) for (const k of COLS_DIA) totalDia[d][k] += c.dias[d][k]; }
+  const total = zera(); for (const c of lista) for (const k of COLS_DIA) total[k] += c.total[k];
+  return { de, ate, dias, colaboradores: lista, total_dia: totalDia, total };
+}
+app.get('/api/relatorio/diario', auth, gestor, wrap((req, res) => res.json(relatorioDiario(req.query))));
+app.get('/api/relatorio/diario/detalhe', auth, gestor, wrap((req, res) => {
+  const colab = Number(req.query.colab), data = String(req.query.data || '');
+  if (!isDate(data)) throw bad('Data inválida');
+  const u = db.prepare("SELECT id, nome FROM usuarios WHERE id = ? AND perfil = 'colaborador'").get(colab);
+  if (!u) throw new HttpError(404, 'Colaborador não encontrado');
+  const w = ['t.ativo = 1', 't.usuario_id = ?', 't.data_local = ?']; const p = [colab, data];
+  if (Number(req.query.loja)) { w.push('t.loja_id = ?'); p.push(Number(req.query.loja)); }
+  const itens = db.prepare(`SELECT t.id, t.criado_em, t.etapa, t.resultado, t.observacao, m.descricao AS motivo, c.cliente_nome, c.telefone, l.nome AS loja
+    FROM contatos t JOIN casos c ON c.id = t.caso_id JOIN motivos m ON m.id = t.motivo_id LEFT JOIN lojas l ON l.id = t.loja_id
+    WHERE ${w.join(' AND ')} ORDER BY t.criado_em, t.id`).all(...p).map((r) => ({ ...r, resultado_rotulo: rot(r.resultado) }));
+  res.json({ colaborador: u.nome, data, itens });
+}));
+
 // ---------- exportação (CSV compatível com Excel pt-BR) ----------
 const cel = (v) => {
   let s = v == null ? '' : String(v);
@@ -799,6 +858,15 @@ app.get('/api/export/reservas.csv', auth, gestor, wrap((req, res) => {
     ['valor_diaria', 'Valor da diária'], ['valor_total', 'Valor total']]));
 }));
 
+app.get('/api/export/diario.csv', auth, gestor, wrap((req, res) => {
+  const r = relatorioDiario(req.query);
+  const linhas = [['Colaborador', 'Data', 'Lançamentos', 'Ofertados', 'Quer falar com a KINTO', 'Não quer falar com a KINTO', 'Não atendeu', 'Não ofertado', 'Primeiro lançamento', 'Último lançamento']];
+  for (const c of r.colaboradores) for (const d of r.dias) {
+    const x = c.dias[d] || { lancamentos: 0, ofertados: 0, quer_falar: 0, nao_quer_falar: 0, nao_atendeu: 0, nao_ofertado: 0 };
+    linhas.push([c.nome, brData(d), x.lancamentos, x.ofertados, x.quer_falar, x.nao_quer_falar, x.nao_atendeu, x.nao_ofertado, c.primeiro[d] || '', c.ultimo[d] || '']);
+  }
+  baixar(res, 'diario-por-colaborador.csv', csvLinhas(linhas));
+}));
 app.get('/api/export/casos.csv', auth, gestor, wrap((req, res) => {
   const { where, p } = filtrosCasos(req.query);
   const rows = db.prepare(`${CASOS_SELECT} ${where} ORDER BY c.id DESC`).all(...p).map((r) => ({

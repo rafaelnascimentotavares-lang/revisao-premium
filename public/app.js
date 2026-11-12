@@ -1,6 +1,6 @@
 'use strict';
 /* Revisão Premium | Registro e acompanhamento. Interface sem dependências externas. */
-const S = { me: null, cfg: null, es: null, live: false, fila: { itens: [], agora: '' }, aguardando: 0, f: { preset: 'hoje', de: '', ate: '', loja: '', colab: '' }, c: { q: '', filtro: '', loja: '' }, adminTab: 'usuarios' };
+const S = { me: null, cfg: null, es: null, live: false, fila: { itens: [], agora: '' }, aguardando: 0, f: { preset: 'hoje', de: '', ate: '', loja: '', colab: '' }, c: { q: '', filtro: '', loja: '' }, adminTab: 'usuarios', d: { de: '', ate: '', loja: '', metrica: 'lancamentos', fds: true } };
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -101,7 +101,7 @@ async function iniciar() {
     <nav class="nav" id="nav">
       ${k ? '' : '<a href="#/registrar" data-r="registrar">Registrar</a>'}
       ${g || k ? '<a href="#/fila" data-r="fila">Atendimento KINTO <span class="cnt hidden" id="cnt">0</span></a>' : ''}
-      ${g ? '<a href="#/painel" data-r="painel">Painel</a><a href="#/casos" data-r="casos">Casos</a>' : ''}
+      ${g ? '<a href="#/painel" data-r="painel">Painel</a><a href="#/diario" data-r="diario">Diário</a><a href="#/casos" data-r="casos">Casos</a>' : ''}
       ${S.me.perfil === 'gestor_kinto' ? '<a href="#/admin" data-r="admin">Administração</a>' : ''}
     </nav>
     <div class="user"><div class="who">${esc(S.me.nome)}<small>${esc(PERFIL[S.me.perfil])}${S.me.loja_nome ? ' · ' + esc(S.me.loja_nome) : ''}</small></div>
@@ -117,11 +117,11 @@ function route() {
   const p = S.me.perfil, g = p === 'gestor_loja' || p === 'gestor_kinto';
   const padrao = p === 'colaborador' ? 'registrar' : p === 'kinto' ? 'fila' : 'painel';
   let r = (location.hash.replace('#/', '') || '').split('?')[0];
-  const permitidas = p === 'colaborador' ? ['registrar'] : p === 'kinto' ? ['fila'] : g ? ['registrar', 'fila', 'painel', 'casos'].concat(p === 'gestor_kinto' ? ['admin'] : []) : [];
+  const permitidas = p === 'colaborador' ? ['registrar'] : p === 'kinto' ? ['fila'] : g ? ['registrar', 'fila', 'painel', 'diario', 'casos'].concat(p === 'gestor_kinto' ? ['admin'] : []) : [];
   if (!permitidas.includes(r)) r = padrao;
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.r === r));
   S.rota = r;
-  ({ registrar: viewRegistrar, fila: viewFila, painel: viewPainel, casos: viewCasos, admin: viewAdmin })[r]();
+  ({ registrar: viewRegistrar, fila: viewFila, painel: viewPainel, diario: viewDiario, casos: viewCasos, admin: viewAdmin })[r]();
 }
 function trocarSenha() {
   const m = modal('Trocar senha', `<form id="pf"><div class="field"><label>Senha atual</label><input type="password" name="atual" autocomplete="current-password" required></div>
@@ -458,6 +458,69 @@ async function abreFicha(id) {
     if (f.dataset.f === 'reat') { if (!v.usuario_id) return toast('Escolha o consultor', 'err'); acao(() => api(`/fila/${id}/reatribuir`, { method: 'POST', body: v }), 'Atribuído'); }
   });
   render();
+}
+
+/* ---------------- diário por colaborador ---------------- */
+const METRICAS_DIA = [['lancamentos', 'Lançamentos'], ['ofertados', 'Ofertados'], ['quer_falar', 'Quer falar com a KINTO'], ['nao_quer_falar', 'Não quer falar com a KINTO'], ['nao_atendeu', 'Não atendeu'], ['encaminhamento', 'Taxa de encaminhamento do dia']];
+async function viewDiario() {
+  const D = S.d, h = hojeBR();
+  if (!D.de) { D.de = h.slice(0, 8) + '01'; D.ate = h; }
+  $('#view').innerHTML = `<div class="page-head"><div><h1>Diário por colaborador</h1><div class="muted small">Lançamentos da equipe de agendamento, dia a dia. Clique em um número para ver os lançamentos daquele dia.</div></div>
+    <div class="actions"><button class="btn alt sm" id="dcsv">Exportar (CSV)</button></div></div>
+    <div class="filters card"><div class="f"><label>De</label><input type="date" id="dde" value="${D.de}"></div><div class="f"><label>Até</label><input type="date" id="dat" value="${D.ate}"></div>
+      <div class="f"><label>Loja</label><select id="dlj">${opts(S.cfg.lojas, D.loja, 'Todas')}</select></div>
+      <div class="f"><label>Mostrar</label><select id="dmt">${METRICAS_DIA.map(([k, l]) => `<option value="${k}"${D.metrica === k ? ' selected' : ''}>${l}</option>`).join('')}</select></div>
+      <div class="f"><label>&nbsp;</label><label class="chk"><input type="checkbox" id="dfs"${D.fds ? '' : ' checked'}> Ocultar fins de semana</label></div></div>
+    <div class="card"><div class="tbl-wrap diario" id="dbody"><div class="empty">Carregando…</div></div><p class="muted small" id="dnota"></p></div>`;
+  const qs = () => `de=${D.de}&ate=${D.ate}&loja=${D.loja}`;
+  let dados = null;
+  const val = (x, m) => (!x ? 0 : m === 'encaminhamento' ? (x.ofertados ? Math.round((x.quer_falar / x.ofertados) * 100) : null) : x[m]);
+  const fmtV = (v, m) => (v == null ? '—' : m === 'encaminhamento' ? v + '%' : v);
+  const desenha = () => {
+    if (!dados) return;
+    const m = D.metrica, hoje = h, ehFds = (d) => { const w = new Date(d + 'T12:00:00Z').getUTCDay(); return w === 0 || w === 6; };
+    const dias = dados.dias.filter((d) => D.fds || !ehFds(d));
+    const cab = dias.map((d) => `<th class="num${ehFds(d) ? ' fds' : ''}">${d.slice(8)}/${d.slice(5, 7)}</th>`).join('');
+    const cel = (c, d) => {
+      if (d > hoje) return '<td class="num fut"></td>';
+      const x = c.dias[d], v = val(x, m), n = x ? x.lancamentos : 0;
+      const cls = ['num', ehFds(d) ? 'fds' : '', n === 0 && !ehFds(d) ? 'vazio' : ''].filter(Boolean).join(' ');
+      return `<td class="${cls}">${n ? `<button class="cellbtn" data-c="${c.id}" data-d="${d}">${fmtV(v, m)}</button>` : (m === 'encaminhamento' ? '—' : 0)}</td>`;
+    };
+    const linhas = dados.colaboradores.map((c) => {
+      const diasAbertos = dias.filter((d) => d <= hoje && !ehFds(d)).length;
+      const sem = diasAbertos - dias.filter((d) => d <= hoje && !ehFds(d) && c.dias[d]).length;
+      const tot = m === 'encaminhamento' ? (c.taxa_encaminhamento == null ? '—' : Math.round(c.taxa_encaminhamento * 100) + '%') : c.total[m];
+      const ativosN = Object.keys(c.dias).length;
+      const media = ativosN && m !== 'encaminhamento' ? (c.total[m] / ativosN).toFixed(1).replace('.', ',') : '—';
+      return `<tr><th class="nm">${esc(c.nome)}</th>${dias.map((d) => cel(c, d)).join('')}<td class="num tot"><b>${tot}</b></td><td class="num">${media}</td><td class="num${sem ? ' vazio' : ''}">${sem}</td></tr>`;
+    }).join('');
+    const tt = (d) => { if (d > hoje) return '<td class="num fut"></td>'; const v = val(dados.total_dia[d], m); return `<td class="num${ehFds(d) ? ' fds' : ''}"><b>${fmtV(v === 0 && m === 'encaminhamento' ? null : v, m)}</b></td>`; };
+    const totGeral = m === 'encaminhamento' ? (dados.total.ofertados ? Math.round((dados.total.quer_falar / dados.total.ofertados) * 100) + '%' : '—') : dados.total[m];
+    $('#dbody').innerHTML = dados.colaboradores.length ? `<table><thead><tr><th>Colaborador</th>${cab}<th class="num">Total</th><th class="num">Média/dia</th><th class="num">Dias sem lançar</th></tr></thead>
+      <tbody>${linhas}</tbody><tfoot><tr><th>Total</th>${dias.map(tt).join('')}<td class="num tot"><b>${totGeral}</b></td><td></td><td></td></tr></tfoot></table>` : '<div class="empty">Nenhum colaborador cadastrado</div>';
+    $('#dnota').textContent = 'Zero em vermelho = dia útil sem nenhum lançamento. Média/dia considera só os dias em que o colaborador lançou algo. "Dias sem lançar" ignora fins de semana e dias futuros.';
+  };
+  const carrega = async () => {
+    try { dados = await api('/relatorio/diario?' + qs()); D.de = dados.de; D.ate = dados.ate; $('#dde').value = D.de; $('#dat').value = D.ate; desenha(); }
+    catch (e) { $('#dbody').innerHTML = `<div class="alert">${esc(e.message)}</div>`; }
+  };
+  $('#dde').addEventListener('change', () => { D.de = $('#dde').value; carrega(); });
+  $('#dat').addEventListener('change', () => { D.ate = $('#dat').value; carrega(); });
+  $('#dlj').addEventListener('change', () => { D.loja = $('#dlj').value; carrega(); });
+  $('#dmt').addEventListener('change', () => { D.metrica = $('#dmt').value; desenha(); });
+  $('#dfs').addEventListener('change', () => { D.fds = !$('#dfs').checked; desenha(); });
+  $('#dcsv').addEventListener('click', (e) => baixarArquivo('/api/export/diario.csv?' + qs(), e.currentTarget));
+  $('#dbody').addEventListener('click', async (e) => {
+    const b = e.target.closest('.cellbtn'); if (!b) return;
+    try {
+      const r = await api(`/relatorio/diario/detalhe?colab=${b.dataset.c}&data=${b.dataset.d}&loja=${D.loja}`);
+      const m = modal(`${r.colaborador} · ${fmtData(r.data)}`, `<div class="tbl-wrap"><table><thead><tr><th>Hora</th><th>Cliente</th><th>Telefone</th><th>Etapa</th><th>Resultado</th><th>Motivo</th><th>Observação</th></tr></thead><tbody>
+        ${r.itens.map((i) => `<tr><td class="nowrap">${esc(String(i.criado_em).slice(11, 16))}</td><td>${esc(i.cliente_nome)}</td><td class="nowrap">${fmtTel(i.telefone)}</td><td>${esc(i.etapa)}</td><td>${badge(i.resultado)}</td><td>${esc(i.motivo)}</td><td>${esc(i.observacao || '')}</td></tr>`).join('') || '<tr><td colspan="7" class="empty">Sem lançamentos</td></tr>'}</tbody></table></div>`, { wide: true });
+      void m;
+    } catch (er) { toast(er.message, 'err'); }
+  });
+  carrega();
 }
 
 /* ---------------- casos ---------------- */

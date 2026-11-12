@@ -610,6 +610,27 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     assert.strictEqual((await call(colab, 'POST', `/api/casos/${G}/reserva/reabrir`)).status, 403);
     await call(k3, 'POST', `/api/fila/${G}/liberar`);
   });
+  await t('relatório diário por colaborador: só gestores, só equipe de agendamento, soma bate com o painel, detalhe e CSV', async () => {
+    assert.strictEqual((await call(colab, 'GET', `/api/relatorio/diario?de=${rev}&ate=${rev}`)).status, 403);
+    assert.strictEqual((await call(k1, 'GET', `/api/relatorio/diario?de=${rev}&ate=${rev}`)).status, 403, 'consultor KINTO não vê');
+    const r = (await call(gest, 'GET', `/api/relatorio/diario?de=${rev}&ate=${rev}`)).data;
+    assert.deepStrictEqual(r.dias, [rev]);
+    assert.ok(r.colaboradores.length >= 1);
+    const soma = r.colaboradores.reduce((s, c) => s + (c.dias[rev] ? c.dias[rev].lancamentos : 0), 0);
+    assert.strictEqual(soma, r.total.lancamentos); assert.strictEqual(r.total_dia[rev].lancamentos, soma);
+    const col = r.colaboradores.find((c) => c.dias[rev]);
+    assert.ok(col, 'há colaborador com lançamentos');
+    const x = col.dias[rev];
+    assert.ok(x.ofertados <= x.lancamentos && x.quer_falar + x.nao_quer_falar <= x.lancamentos);
+    assert.ok(col.primeiro[rev] && col.primeiro[rev] <= col.ultimo[rev]);
+    const d = (await call(gest, 'GET', `/api/relatorio/diario/detalhe?colab=${col.id}&data=${rev}`)).data;
+    assert.strictEqual(d.itens.length, x.lancamentos, 'detalhe bate com a célula');
+    assert.strictEqual((await call(gest, 'GET', `/api/relatorio/diario/detalhe?colab=${col.id}&data=lixo`)).status, 400);
+    const longo = (await call(gest, 'GET', '/api/relatorio/diario?de=2020-01-01&ate=2020-12-31')).data;
+    assert.ok(longo.dias.length <= 62, 'limite de 62 dias');
+    const csvd = (await call(gest, 'GET', `/api/export/diario.csv?de=${rev}&ate=${rev}`)).data;
+    assert.ok(String(csvd).includes('Colaborador;Data;Lançamentos') && String(csvd).includes(col.nome));
+  });
   await t('excluir caso: só administrador, exige confirmação, apaga tudo do caso, audita e faz backup', async () => {
     const r = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Caso Excluir', telefone: '62 94444-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
     assert.strictEqual(r.status, 201);
