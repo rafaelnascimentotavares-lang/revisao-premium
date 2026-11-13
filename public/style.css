@@ -213,3 +213,10 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .cellbtn:hover { background: var(--soft); }
 .chk { display: flex; align-items: center; gap: 6px; font-size: 14px; text-transform: none; letter-spacing: 0; color: var(--text); padding-top: 4px; }
 .chk input { width: 18px; height: 18px; padding: 0; } .chk { white-space: nowrap; }
+
+/* meus agendamentos */
+.semana { display: flex; gap: 8px; margin-bottom: 14px; flex-wrap: wrap; }
+.semana .sd { flex: 1; min-width: 56px; background: var(--soft); border-radius: 10px; padding: 8px 10px; text-align: center; font-size: 12px; color: var(--muted); }
+.semana .sd b { display: block; font-size: 20px; color: var(--text); min-height: 26px; }
+.semana .sd.hoje { outline: 2px solid var(--teal, #0d6e8a); } .semana .sd.fut { opacity: .5; }
+tr.diahead td { background: var(--soft); border-bottom: 1px solid var(--line); }

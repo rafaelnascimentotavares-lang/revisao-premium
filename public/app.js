@@ -1,6 +1,6 @@
 'use strict';
 /* Revisão Premium | Registro e acompanhamento. Interface sem dependências externas. */
-const S = { me: null, cfg: null, es: null, live: false, fila: { itens: [], agora: '' }, aguardando: 0, f: { preset: 'hoje', de: '', ate: '', loja: '', colab: '' }, c: { q: '', filtro: '', loja: '' }, adminTab: 'usuarios', d: { de: '', ate: '', loja: '', metrica: 'lancamentos', fds: true } };
+const S = { me: null, cfg: null, es: null, live: false, fila: { itens: [], agora: '' }, aguardando: 0, f: { preset: 'hoje', de: '', ate: '', loja: '', colab: '' }, c: { q: '', filtro: '', loja: '' }, adminTab: 'usuarios', m: { vista: 'hoje', q: '', etapa: 'Agendamento', res: '', colab: '' }, d: { de: '', ate: '', loja: '', metrica: 'lancamentos', fds: true } };
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -99,7 +99,7 @@ async function iniciar() {
   $('#app').innerHTML = `<header class="top"><div class="top-in">
     <div class="brand"><span class="logo-pill"><img class="logo-saga" src="/img/logo-saga-toyota.png" alt="Toyota Saga" width="700" height="193"><span class="sep" aria-hidden="true"></span><img class="logo-kinto" src="/img/logo-kinto.png" alt="KINTO" width="700" height="127"></span><span class="brand-t">Revisão Premium</span></div>
     <nav class="nav" id="nav">
-      ${k ? '' : '<a href="#/registrar" data-r="registrar">Registrar</a>'}
+      ${k ? '' : '<a href="#/registrar" data-r="registrar">Registrar</a><a href="#/meus" data-r="meus">Meus agendamentos</a>'}
       ${g || k ? '<a href="#/fila" data-r="fila">Atendimento KINTO <span class="cnt hidden" id="cnt">0</span></a>' : ''}
       ${g ? '<a href="#/painel" data-r="painel">Painel</a><a href="#/diario" data-r="diario">Diário</a><a href="#/casos" data-r="casos">Casos</a>' : ''}
       ${S.me.perfil === 'gestor_kinto' ? '<a href="#/admin" data-r="admin">Administração</a>' : ''}
@@ -117,11 +117,11 @@ function route() {
   const p = S.me.perfil, g = p === 'gestor_loja' || p === 'gestor_kinto';
   const padrao = p === 'colaborador' ? 'registrar' : p === 'kinto' ? 'fila' : 'painel';
   let r = (location.hash.replace('#/', '') || '').split('?')[0];
-  const permitidas = p === 'colaborador' ? ['registrar'] : p === 'kinto' ? ['fila'] : g ? ['registrar', 'fila', 'painel', 'diario', 'casos'].concat(p === 'gestor_kinto' ? ['admin'] : []) : [];
+  const permitidas = p === 'colaborador' ? ['registrar', 'meus'] : p === 'kinto' ? ['fila'] : g ? ['registrar', 'meus', 'fila', 'painel', 'diario', 'casos'].concat(p === 'gestor_kinto' ? ['admin'] : []) : [];
   if (!permitidas.includes(r)) r = padrao;
   $$('#nav a').forEach((a) => a.classList.toggle('on', a.dataset.r === r));
   S.rota = r;
-  ({ registrar: viewRegistrar, fila: viewFila, painel: viewPainel, diario: viewDiario, casos: viewCasos, admin: viewAdmin })[r]();
+  ({ registrar: viewRegistrar, meus: viewMeus, fila: viewFila, painel: viewPainel, diario: viewDiario, casos: viewCasos, admin: viewAdmin })[r]();
 }
 function trocarSenha() {
   const m = modal('Trocar senha', `<form id="pf"><div class="field"><label>Senha atual</label><input type="password" name="atual" autocomplete="current-password" required></div>
@@ -458,6 +458,81 @@ async function abreFicha(id) {
     if (f.dataset.f === 'reat') { if (!v.usuario_id) return toast('Escolha o consultor', 'err'); acao(() => api(`/fila/${id}/reatribuir`, { method: 'POST', body: v }), 'Atribuído'); }
   });
   render();
+}
+
+/* ---------------- meus agendamentos ---------------- */
+const segundaDe = (d) => { const w = new Date(d + 'T12:00:00Z').getUTCDay(); return addDias(d, -((w + 6) % 7)); };
+const NOMES_DIA = ['dom', 'seg', 'ter', 'qua', 'qui', 'sex', 'sáb'];
+async function viewMeus() {
+  const M = S.m, gest = S.me.perfil !== 'colaborador', h = hojeBR();
+  const seg = segundaDe(h), segAnt = addDias(seg, -7);
+  $('#view').innerHTML = `<div class="page-head"><div><h1>${gest ? 'Agendamentos por colaborador' : 'Meus agendamentos'}</h1>
+    <div class="muted small">${gest ? 'Escolha o colaborador para ver os lançamentos dele.' : 'Só você vê estes lançamentos. Você pode corrigir um lançamento até o fim do dia em que o fez.'}</div></div></div>
+    <div id="mkp" class="kpis"></div>
+    <div class="filters card">
+      ${gest ? `<div class="f"><label>Colaborador</label><select id="mco">${opts(S.cfg.colaboradores, M.colab, 'Todos')}</select></div>` : ''}
+      <div class="f"><label>Período</label><select id="mvi"><option value="hoje"${M.vista === 'hoje' ? ' selected' : ''}>Hoje</option><option value="semana"${M.vista === 'semana' ? ' selected' : ''}>Esta semana (seg a dom)</option></select></div>
+      <div class="f"><label>Etapa</label><select id="met"><option value="">Todas</option>${S.cfg.etapas.map((e) => `<option value="${esc(e)}"${M.etapa === e ? ' selected' : ''}>${esc(e)}</option>`).join('')}</select></div>
+      <div class="f"><label>Resultado</label><select id="mre"><option value="">Todos</option>${S.cfg.resultados.filter((r) => rot(r) && r !== 'Ainda não decidiu').map((r) => `<option value="${esc(r)}"${M.res === r ? ' selected' : ''}>${esc(rot(r))}</option>`).join('')}</select></div>
+      <div class="f grow"><label>Buscar por nome ou telefone</label><input id="mq" value="${esc(M.q)}" placeholder="Ex.: Maria ou 98888"></div></div>
+    <div class="card"><div class="tbl-wrap" id="mlist"><div class="empty">Carregando…</div></div></div>`;
+  let dados = null;
+  const nAg = (itens) => new Set(itens.filter((t) => t.etapa === 'Agendamento').map((t) => t.caso_id)).size;
+  const desenha = () => {
+    if (!dados) return;
+    const todos = dados.itens, no = (a, b) => todos.filter((t) => t.data_local >= a && t.data_local <= b);
+    const hojeIt = no(h, h), semIt = no(seg, addDias(seg, 6)), antIt = no(segAnt, addDias(segAnt, 6));
+    const kpi2 = (l, v, s) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
+    $('#mkp').innerHTML = kpi2('Agendamentos hoje', nAg(hojeIt), 'clientes agendados') + kpi2('Esta semana', nAg(semIt), 'segunda a domingo') + kpi2('Semana passada', nAg(antIt), 'segunda a domingo');
+    // quadro da semana
+    const quadro = Array.from({ length: 7 }, (_, i) => { const d = addDias(seg, i); return { d, n: nAg(todos.filter((t) => t.data_local === d)) }; });
+    let lista = M.vista === 'hoje' ? hojeIt : semIt;
+    if (M.etapa) lista = lista.filter((t) => t.etapa === M.etapa);
+    if (M.res) lista = lista.filter((t) => t.resultado === M.res);
+    const q = M.q.trim().toLowerCase(), qd = q.replace(/\D/g, '');
+    if (q) lista = lista.filter((t) => t.cliente_nome.toLowerCase().includes(q) || (qd && String(t.telefone).includes(qd)));
+    const linha = (t) => `<tr><td class="nowrap">${esc(String(t.criado_em).slice(11, 16))}</td>${gest ? `<td>${esc(t.colaborador)}</td>` : ''}<td>${esc(t.cliente_nome)}</td><td class="nowrap">${fmtTel(t.telefone)}</td><td>${esc(t.loja || '')}</td><td class="nowrap">${fmtData(t.data_revisao)}</td><td>${esc(t.etapa)}</td><td>${badge(t.resultado)}</td><td>${esc(t.motivo)}</td>
+      <td class="nowrap">${t.editavel ? `<button class="btn alt sm" data-corrigir="${t.id}">Corrigir</button>` : t.usuario_id === S.me.id ? `<span class="muted small" title="${t.bloqueio === 'kinto' ? 'A KINTO já assumiu este cliente' : 'O prazo (dia do lançamento) acabou'}">🔒 ${t.bloqueio === 'kinto' ? 'Com a KINTO' : 'Prazo encerrado'}</span>` : ''}</td></tr>`;
+    const colspan = gest ? 10 : 9;
+    let corpo = '';
+    if (M.vista === 'semana') {
+      for (const d of quadro.map((x) => x.d).filter((x) => x <= h).reverse()) {
+        const it = lista.filter((t) => t.data_local === d);
+        corpo += `<tr class="diahead"><td colspan="${colspan}"><b>${NOMES_DIA[new Date(d + 'T12:00:00Z').getUTCDay()]} ${fmtData(d).slice(0, 5)}</b> · ${nAg(it)} agendamento${nAg(it) === 1 ? '' : 's'} · ${it.length} lançamento${it.length === 1 ? '' : 's'}</td></tr>` + (it.map(linha).join('') || `<tr><td colspan="${colspan}" class="empty small">Sem lançamentos neste dia</td></tr>`);
+      }
+    } else corpo = lista.map(linha).join('') || `<tr><td colspan="${colspan}" class="empty">Nenhum lançamento hoje${M.etapa || M.res || q ? ' com esses filtros' : ''}</td></tr>`;
+    $('#mlist').innerHTML = `<div class="semana">${quadro.map((x) => `<div class="sd${x.d === h ? ' hoje' : ''}${x.d > h ? ' fut' : ''}"><span>${NOMES_DIA[new Date(x.d + 'T12:00:00Z').getUTCDay()]} ${x.d.slice(8)}</span><b>${x.d > h ? '' : x.n}</b></div>`).join('')}</div>
+      <table><thead><tr><th>Hora</th>${gest ? '<th>Colaborador</th>' : ''}<th>Cliente</th><th>Telefone</th><th>Loja</th><th>Revisão</th><th>Etapa</th><th>Resultado</th><th>Motivo</th><th></th></tr></thead><tbody>${corpo}</tbody></table>`;
+  };
+  const carrega = async () => {
+    try { dados = await api(`/meus-lancamentos?de=${segAnt}&ate=${h}${gest ? '&colab=' + M.colab : ''}`); desenha(); }
+    catch (e) { $('#mlist').innerHTML = `<div class="alert">${esc(e.message)}</div>`; }
+  };
+  const liga = (id, k, ev = 'change') => $('#' + id).addEventListener(ev, (e) => { M[k] = e.target.value; desenha(); });
+  liga('mvi', 'vista'); liga('met', 'etapa'); liga('mre', 'res'); liga('mq', 'q', 'input');
+  if (gest) $('#mco').addEventListener('change', (e) => { M.colab = e.target.value; carrega(); });
+  $('#mlist').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-corrigir]'); if (!b) return;
+    const t = dados.itens.find((x) => x.id === Number(b.dataset.corrigir)); if (!t) return;
+    const motOpts = (res, sel) => S.cfg.motivos.filter((x) => x.resultado === res).map((x) => `<option value="${x.id}" data-obs="${x.exige_obs}"${x.id === sel ? ' selected' : ''}>${esc(x.descricao)}</option>`).join('');
+    const resOk = S.cfg.resultados.filter((r) => ['Aceitou', 'Recusou', 'Não atendeu', 'Não ofertado'].includes(r) || r === t.resultado);
+    const m = modal(`Corrigir lançamento · ${t.cliente_nome}`, `<form id="mf"><p class="muted small">Você pode corrigir etapa, resultado, motivo e observação até o fim de hoje. Nome, telefone, loja e data da revisão só o gestor altera.</p>
+      <div class="field"><label>Etapa</label><select name="etapa">${opts(S.cfg.etapas, t.etapa)}</select></div>
+      <div class="field"><label>Resultado</label><select name="resultado" id="mfr">${opts(comRot(resOk), t.resultado)}</select></div>
+      <div class="field"><label>Motivo</label><select name="motivo_id" id="mfm">${motOpts(t.resultado, t.motivo_id)}</select></div>
+      <div class="field"><label>Observação <span class="opt">(obrigatória para "Outro")</span></label><textarea name="observacao" maxlength="500">${esc(t.observacao || '')}</textarea></div>
+      <div class="err" id="mferr"></div><div class="actions"><button class="btn">Salvar correção</button><button class="btn alt" type="button" id="mfno">Cancelar</button></div></form>`);
+    $('#mfr', m.el).addEventListener('change', (ev) => { $('#mfm', m.el).innerHTML = '<option value="">Selecione o motivo</option>' + motOpts(ev.target.value, null); });
+    $('#mfno', m.el).addEventListener('click', m.close);
+    $('#mf', m.el).addEventListener('submit', async (ev) => {
+      ev.preventDefault();
+      const v = Object.fromEntries(new FormData(ev.target));
+      if (!v.motivo_id) return void ($('#mferr', m.el).textContent = 'Escolha o motivo.');
+      try { await api('/meus-lancamentos/' + t.id, { method: 'PUT', body: v }); m.close(); toast('Lançamento corrigido ✓', 'ok'); carrega(); }
+      catch (er) { $('#mferr', m.el).textContent = er.message; }
+    });
+  });
+  carrega();
 }
 
 /* ---------------- diário por colaborador ---------------- */

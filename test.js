@@ -631,6 +631,47 @@ const t = async (nome, fn) => { try { await fn(); ok++; console.log('  ok  ', no
     const csvd = (await call(gest, 'GET', `/api/export/diario.csv?de=${rev}&ate=${rev}`)).data;
     assert.ok(String(csvd).includes('Colaborador;Data;Lançamentos') && String(csvd).includes(col.nome));
   });
+  await t('meus agendamentos: colaborador vê e corrige só o próprio, só no dia, e não depois que a KINTO assumiu', async () => {
+    const { db } = require('./db');
+    const bia = jar('bia');
+    await call(adm, 'POST', '/api/usuarios', { nome: 'Bia', email: 'bia@saga.com', senha: 'colab-1234', perfil: 'colaborador' });
+    await call(bia, 'POST', '/api/login', { email: 'bia@saga.com', senha: 'colab-1234' });
+    const rb = await call(bia, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: GYN(), cliente_nome: 'Cliente da Bia', telefone: '62 98111-0001', resultado: 'Não atendeu', motivo_id: mot('Não atendeu', 'Caixa postal ou não atendeu') });
+    assert.strictEqual(rb.status, 201);
+    const minha = (await call(bia, 'GET', '/api/meus-lancamentos?de=' + rev + '&ate=' + rev)).data.itens;
+    assert.ok(minha.length >= 1 && minha.every((x) => x.colaborador === 'Bia'), 'só vê os próprios');
+    const it = minha.find((x) => x.cliente_nome === 'Cliente da Bia');
+    assert.ok(it.editavel);
+    const daAna = (await call(colab, 'GET', '/api/meus-lancamentos?de=' + rev + '&ate=' + rev)).data.itens;
+    assert.ok(daAna.every((x) => x.colaborador === 'Ana') && !daAna.some((x) => x.id === it.id), 'Ana não vê o da Bia');
+    assert.strictEqual((await call(colab, 'PUT', `/api/meus-lancamentos/${it.id}`, { resultado: 'Recusou', motivo_id: mot('Recusou', 'Preço') })).status, 403, 'não corrige o de outra pessoa');
+    // correção no mesmo dia
+    assert.strictEqual((await call(bia, 'PUT', `/api/meus-lancamentos/${it.id}`, { etapa: 'Agendamento', resultado: 'Recusou', motivo_id: mot('Recusou', 'Preço') })).status, 200);
+    assert.strictEqual(db.prepare('SELECT resultado FROM contatos WHERE id = ?').get(it.id).resultado, 'Recusou');
+    assert.ok(db.prepare("SELECT 1 FROM auditoria WHERE entidade = 'contato' AND entidade_id = ? AND acao = 'edicao'").get(it.id), 'auditoria da correção');
+    // opção aposentada não pode ser escolhida
+    assert.strictEqual((await call(bia, 'PUT', `/api/meus-lancamentos/${it.id}`, { resultado: 'Ainda não decidiu', motivo_id: mot('Ainda não decidiu', 'Avalia o preço') })).status, 400);
+    // KINTO assumiu: trava
+    const rb2 = await call(bia, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: GYN(), cliente_nome: 'Cliente 2 da Bia', telefone: '62 98111-0002', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
+    const it2 = (await call(bia, 'GET', '/api/meus-lancamentos?de=' + rev + '&ate=' + rev)).data.itens.find((x) => x.cliente_nome === 'Cliente 2 da Bia');
+    assert.ok(it2.editavel);
+    assert.strictEqual((await call(k3, 'POST', `/api/fila/${rb2.data.caso_id || it2.caso_id}/assumir`)).status, 200);
+    const it2b = (await call(bia, 'GET', '/api/meus-lancamentos?de=' + rev + '&ate=' + rev)).data.itens.find((x) => x.id === it2.id);
+    assert.strictEqual(it2b.editavel, false); assert.strictEqual(it2b.bloqueio, 'kinto');
+    const rk = await call(bia, 'PUT', `/api/meus-lancamentos/${it2.id}`, { resultado: 'Recusou', motivo_id: mot('Recusou', 'Preço') });
+    assert.strictEqual(rk.status, 403); assert.ok(/KINTO já assumiu/.test(rk.data.erro));
+    await call(k3, 'POST', `/api/fila/${it2.caso_id}/liberar`);
+    // prazo: contato de "ontem" não pode ser corrigido
+    db.prepare('UPDATE contatos SET data_local = ? WHERE id = ?').run(require('./db').addDays(rev, -1), it.id);
+    const ra = await call(bia, 'PUT', `/api/meus-lancamentos/${it.id}`, { resultado: 'Não atendeu', motivo_id: mot('Não atendeu', 'Caixa postal ou não atendeu') });
+    assert.strictEqual(ra.status, 403); assert.ok(/prazo/.test(ra.data.erro));
+    const ontem = (await call(bia, 'GET', '/api/meus-lancamentos?de=' + require('./db').addDays(rev, -1) + '&ate=' + rev)).data.itens.find((x) => x.id === it.id);
+    assert.strictEqual(ontem.bloqueio, 'prazo');
+    // consultor KINTO não acessa; gestor vê todos
+    assert.strictEqual((await call(k1, 'GET', '/api/meus-lancamentos')).status, 403);
+    const g = (await call(gest, 'GET', `/api/meus-lancamentos?de=${rev}&ate=${rev}`)).data.itens;
+    assert.ok(g.some((x) => x.colaborador === 'Bia') && g.some((x) => x.colaborador === 'Ana') && g.every((x) => !x.editavel), 'gestor vê todos, sem editar por esta tela');
+  });
   await t('excluir caso: só administrador, exige confirmação, apaga tudo do caso, audita e faz backup', async () => {
     const r = await call(colab, 'POST', '/api/contatos', { etapa: 'Agendamento', data_revisao: rev, loja_id: ANA(), cliente_nome: 'Caso Excluir', telefone: '62 94444-0001', resultado: 'Aceitou', motivo_id: mot('Aceitou', 'Conveniência') });
     assert.strictEqual(r.status, 201);

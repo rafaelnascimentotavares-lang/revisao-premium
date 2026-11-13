@@ -563,10 +563,8 @@ app.put('/api/casos/:id', auth, gestor, wrap((req, res) => {
   res.json(detalheCaso(id));
 }));
 
-app.put('/api/contatos/:id', auth, gestor, wrap((req, res) => {
-  const id = Number(req.params.id);
-  const antes = db.prepare('SELECT * FROM contatos WHERE id = ? AND ativo = 1').get(id);
-  if (!antes) throw new HttpError(404, 'Contato não encontrado');
+function editarContato(userId, id, antes, body) {
+  const req = { body, user: { id: userId } };
   const etapa = String(req.body.etapa || antes.etapa);
   const resultado = String(req.body.resultado || '');
   const obs = txt(req.body.observacao, 500);
@@ -580,7 +578,47 @@ app.put('/api/contatos/:id', auth, gestor, wrap((req, res) => {
   avisa(antes.loja_id);
   const estDepois = estadoFila(antes.caso_id);
   if ((!estAntes.na_fila && estDepois.na_fila) || (!estAntes.aceitou && estDepois.aceitou)) novoAceite(antes.caso_id);
+}
+app.put('/api/contatos/:id', auth, gestor, wrap((req, res) => {
+  const id = Number(req.params.id);
+  const antes = db.prepare('SELECT * FROM contatos WHERE id = ? AND ativo = 1').get(id);
+  if (!antes) throw new HttpError(404, 'Contato não encontrado');
+  editarContato(req.user.id, id, antes, req.body);
   res.json(detalheCaso(antes.caso_id));
+}));
+
+// ---------- meus agendamentos: o colaborador vê e corrige só os próprios lançamentos, e só no dia em que lançou ----------
+function bloqueioCorrecao(c, userId) {
+  if (c.usuario_id !== userId) return 'outro';
+  if (c.data_local !== hoje()) return 'prazo';
+  if (db.prepare('SELECT 1 FROM atendimentos WHERE caso_id = ?').get(c.caso_id) || db.prepare('SELECT 1 FROM reservas WHERE caso_id = ?').get(c.caso_id)) return 'kinto';
+  return null;
+}
+const MSG_BLOQUEIO = { prazo: 'O prazo para corrigir acabou: só dá para corrigir no dia do lançamento. Fale com o gestor.', kinto: 'A KINTO já assumiu este cliente. Fale com o gestor.', outro: 'Você só pode corrigir os seus lançamentos.' };
+app.get('/api/meus-lancamentos', auth, registra, wrap((req, res) => {
+  let de = isDate(req.query.de) ? req.query.de : addDays(hoje(), -6), ate = isDate(req.query.ate) ? req.query.ate : hoje();
+  if (ate < de) [de, ate] = [ate, de];
+  if (addDays(de, 30) < ate) de = addDays(ate, -30);
+  const uid = ehGestor(req.user) ? (Number(req.query.colab) || null) : req.user.id;
+  const w = ['t.ativo = 1', 't.data_local BETWEEN ? AND ?']; const p = [de, ate];
+  if (uid) { w.push('t.usuario_id = ?'); p.push(uid); } else if (!ehGestor(req.user)) throw new HttpError(403, 'Sem permissão');
+  const itens = db.prepare(`SELECT t.id, t.caso_id, t.usuario_id, t.criado_em, t.data_local, t.etapa, t.resultado, t.motivo_id, m.descricao AS motivo, t.observacao,
+      c.cliente_nome, c.telefone, c.data_revisao, l.nome AS loja, u.nome AS colaborador
+    FROM contatos t JOIN casos c ON c.id = t.caso_id JOIN motivos m ON m.id = t.motivo_id JOIN usuarios u ON u.id = t.usuario_id LEFT JOIN lojas l ON l.id = t.loja_id
+    WHERE ${w.join(' AND ')} ORDER BY t.criado_em DESC, t.id DESC`).all(...p).map((t) => {
+    const b = bloqueioCorrecao(t, req.user.id);
+    return { ...t, resultado_rotulo: rot(t.resultado), editavel: !b, bloqueio: b };
+  });
+  res.json({ de, ate, hoje: hoje(), itens });
+}));
+app.put('/api/meus-lancamentos/:id', auth, registra, wrap((req, res) => {
+  const id = Number(req.params.id);
+  const antes = db.prepare('SELECT * FROM contatos WHERE id = ? AND ativo = 1').get(id);
+  if (!antes) throw new HttpError(404, 'Lançamento não encontrado');
+  const b = bloqueioCorrecao(antes, req.user.id);
+  if (b) throw new HttpError(403, MSG_BLOQUEIO[b]);
+  editarContato(req.user.id, id, antes, req.body);
+  res.json({ ok: true });
 }));
 
 app.delete('/api/contatos/:id', auth, gestor, wrap((req, res) => {
