@@ -1,6 +1,6 @@
 'use strict';
 /* Revisão Premium | Registro e acompanhamento. Interface sem dependências externas. */
-const S = { me: null, cfg: null, es: null, live: false, fila: { itens: [], agora: '' }, aguardando: 0, f: { preset: 'hoje', de: '', ate: '', loja: '', colab: '' }, c: { q: '', filtro: '', loja: '' }, adminTab: 'usuarios', m: { dia: '', vista: 'hoje', q: '', etapa: 'Agendamento', res: '', colab: '' }, d: { de: '', ate: '', loja: '', metrica: 'lancamentos', fds: true } };
+const S = { me: null, cfg: null, es: null, live: false, fila: { itens: [], agora: '' }, aguardando: 0, f: { preset: 'hoje', de: '', ate: '', loja: '', colab: '' }, c: { q: '', filtro: '', loja: '' }, adminTab: 'usuarios', m: { dia: '', vista: 'hoje', q: '', etapa: '', res: '', colab: '' }, d: { de: '', ate: '', loja: '', metrica: 'lancamentos', fds: true } };
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
