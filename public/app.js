@@ -483,9 +483,10 @@ async function viewMeus() {
     const todos = dados.itens, no = (a, b) => todos.filter((t) => t.data_local >= a && t.data_local <= b);
     const hojeIt = no(h, h), semIt = no(seg, addDias(seg, 6)), antIt = no(segAnt, addDias(segAnt, 6));
     const kpi2 = (l, v, s) => `<div class="kpi"><div class="l">${l}</div><div class="v">${v}</div><div class="s">${s}</div></div>`;
-    $('#mkp').innerHTML = kpi2('Agendamentos hoje', nAg(hojeIt), 'clientes agendados') + kpi2('Esta semana', nAg(semIt), 'segunda a domingo') + kpi2('Semana passada', nAg(antIt), 'segunda a domingo');
+    $('#mkp').innerHTML = kpi2('Agendamentos hoje', nAg(hojeIt), 'clientes distintos na etapa Agendamento') + kpi2('Esta semana', nAg(semIt), 'segunda a domingo') + kpi2('Semana passada', nAg(antIt), 'segunda a domingo');
     // quadro da semana
-    const quadro = Array.from({ length: 7 }, (_, i) => { const d = addDias(seg, i); return { d, n: nAg(todos.filter((t) => t.data_local === d)) }; });
+    const passa = (t) => (!M.etapa || t.etapa === M.etapa) && (!M.res || t.resultado === M.res);
+    const quadro = Array.from({ length: 7 }, (_, i) => { const d = addDias(seg, i); return { d, n: todos.filter((t) => t.data_local === d && passa(t)).length }; });
     if (M.vista === 'dia' && !M.dia) M.vista = 'hoje';
     let lista = M.vista === 'hoje' ? hojeIt : M.vista === 'dia' ? no(M.dia, M.dia) : semIt;
     if (M.etapa) lista = lista.filter((t) => t.etapa === M.etapa);
@@ -499,14 +500,16 @@ async function viewMeus() {
     if (M.vista === 'semana') {
       for (const d of quadro.map((x) => x.d).filter((x) => x <= h).reverse()) {
         const it = lista.filter((t) => t.data_local === d);
-        corpo += `<tr class="diahead"><td colspan="${colspan}"><b>${NOMES_DIA[new Date(d + 'T12:00:00Z').getUTCDay()]} ${fmtData(d).slice(0, 5)}</b> · ${nAg(it)} agendamento${nAg(it) === 1 ? '' : 's'} · ${it.length} lançamento${it.length === 1 ? '' : 's'}</td></tr>` + (it.map(linha).join('') || `<tr><td colspan="${colspan}" class="empty small">Sem lançamentos neste dia</td></tr>`);
+        corpo += `<tr class="diahead"><td colspan="${colspan}"><b>${NOMES_DIA[new Date(d + 'T12:00:00Z').getUTCDay()]} ${fmtData(d).slice(0, 5)}</b> · ${it.length} lançamento${it.length === 1 ? '' : 's'} · ${new Set(it.map((t) => t.caso_id)).size} cliente${new Set(it.map((t) => t.caso_id)).size === 1 ? '' : 's'}</td></tr>` + (it.map(linha).join('') || `<tr><td colspan="${colspan}" class="empty small">Sem lançamentos neste dia</td></tr>`);
       }
     } else corpo = lista.map(linha).join('') || `<tr><td colspan="${colspan}" class="empty">Nenhum lançamento hoje${M.etapa || M.res || q ? ' com esses filtros' : ''}</td></tr>`;
     const sel = M.vista === 'dia' ? M.dia : M.vista === 'hoje' ? h : '';
     const ot = $('#mdia'); if (ot) { ot.textContent = M.dia ? 'Dia ' + fmtData(M.dia).slice(0, 5) : 'Dia escolhido no quadro'; ot.disabled = !M.dia; }
     $('#mvi').value = M.vista;
-    $('#mlist').innerHTML = `<div class="semana" role="group" aria-label="Agendamentos por dia da semana">${quadro.map((x) => { const fut = x.d > h, nome = NOMES_DIA[new Date(x.d + 'T12:00:00Z').getUTCDay()];
+    const nCli = new Set(lista.map((t) => t.caso_id)).size;
+    $('#mlist').innerHTML = `<div class="muted small mb">Cada número do quadro é a quantidade de <b>lançamentos</b> do dia, com os filtros de etapa e resultado. Um cliente contatado duas vezes conta duas vezes.</div><div class="semana" role="group" aria-label="Agendamentos por dia da semana">${quadro.map((x) => { const fut = x.d > h, nome = NOMES_DIA[new Date(x.d + 'T12:00:00Z').getUTCDay()];
         return `<button type="button" class="sd${x.d === h ? ' hoje' : ''}${x.d === sel ? ' sel' : ''}${fut ? ' fut' : ''}${!fut && !x.n ? ' zero' : ''}" data-dia="${x.d}"${fut ? ' disabled' : ''}><span class="dn">${nome}</span><b>${fut ? '' : x.n || (x.d === h ? '0' : '–')}</b><span class="dd">${x.d.slice(8)}/${x.d.slice(5, 7)}</span></button>`; }).join('')}</div>
+      <div class="resumo-lista"><b>${lista.length}</b> lançamento${lista.length === 1 ? '' : 's'} · <b>${nCli}</b> cliente${nCli === 1 ? '' : 's'}${q ? ' (com a busca)' : ''}</div>
       <table><thead><tr><th>Hora</th>${gest ? '<th>Colaborador</th>' : ''}<th>Cliente</th><th>Telefone</th><th>Loja</th><th>Revisão</th><th>Etapa</th><th>Resultado</th><th>Motivo</th><th></th></tr></thead><tbody>${corpo}</tbody></table>`;
   };
   const carrega = async () => {

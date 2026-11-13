@@ -229,3 +229,4 @@ fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
 .semana .sd.fut { background: transparent; border-style: dashed; cursor: default; opacity: .55; }
 @media (max-width: 560px) { .semana { gap: 4px; } .semana .sd b { font-size: 18px; } .semana .sd .dd { display: none; } }
 tr.diahead td { background: var(--soft); border-bottom: 1px solid var(--line); }
+.resumo-lista { margin: 4px 0 10px; font-size: 14px; color: var(--muted); } .resumo-lista b { color: var(--text); }
