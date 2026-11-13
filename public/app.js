@@ -1,6 +1,6 @@
 'use strict';
 /* Revisão Premium | Registro e acompanhamento. Interface sem dependências externas. */
-const S = { me: null, cfg: null, es: null, live: false, fila: { itens: [], agora: '' }, aguardando: 0, f: { preset: 'hoje', de: '', ate: '', loja: '', colab: '' }, c: { q: '', filtro: '', loja: '' }, adminTab: 'usuarios', m: { vista: 'hoje', q: '', etapa: 'Agendamento', res: '', colab: '' }, d: { de: '', ate: '', loja: '', metrica: 'lancamentos', fds: true } };
+const S = { me: null, cfg: null, es: null, live: false, fila: { itens: [], agora: '' }, aguardando: 0, f: { preset: 'hoje', de: '', ate: '', loja: '', colab: '' }, c: { q: '', filtro: '', loja: '' }, adminTab: 'usuarios', m: { dia: '', vista: 'hoje', q: '', etapa: 'Agendamento', res: '', colab: '' }, d: { de: '', ate: '', loja: '', metrica: 'lancamentos', fds: true } };
 const $ = (s, el = document) => el.querySelector(s);
 const $$ = (s, el = document) => [...el.querySelectorAll(s)];
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -471,7 +471,7 @@ async function viewMeus() {
     <div id="mkp" class="kpis"></div>
     <div class="filters card">
       ${gest ? `<div class="f"><label>Colaborador</label><select id="mco">${opts(S.cfg.colaboradores, M.colab, 'Todos')}</select></div>` : ''}
-      <div class="f"><label>Período</label><select id="mvi"><option value="hoje"${M.vista === 'hoje' ? ' selected' : ''}>Hoje</option><option value="semana"${M.vista === 'semana' ? ' selected' : ''}>Esta semana (seg a dom)</option></select></div>
+      <div class="f"><label>Período</label><select id="mvi"><option value="hoje"${M.vista === 'hoje' ? ' selected' : ''}>Hoje</option><option value="semana"${M.vista === 'semana' ? ' selected' : ''}>Esta semana (seg a dom)</option><option value="dia" id="mdia"${M.vista === 'dia' ? ' selected' : ''}>Dia escolhido no quadro</option></select></div>
       <div class="f"><label>Etapa</label><select id="met"><option value="">Todas</option>${S.cfg.etapas.map((e) => `<option value="${esc(e)}"${M.etapa === e ? ' selected' : ''}>${esc(e)}</option>`).join('')}</select></div>
       <div class="f"><label>Resultado</label><select id="mre"><option value="">Todos</option>${S.cfg.resultados.filter((r) => rot(r) && r !== 'Ainda não decidiu').map((r) => `<option value="${esc(r)}"${M.res === r ? ' selected' : ''}>${esc(rot(r))}</option>`).join('')}</select></div>
       <div class="f grow"><label>Buscar por nome ou telefone</label><input id="mq" value="${esc(M.q)}" placeholder="Ex.: Maria ou 98888"></div></div>
@@ -486,7 +486,8 @@ async function viewMeus() {
     $('#mkp').innerHTML = kpi2('Agendamentos hoje', nAg(hojeIt), 'clientes agendados') + kpi2('Esta semana', nAg(semIt), 'segunda a domingo') + kpi2('Semana passada', nAg(antIt), 'segunda a domingo');
     // quadro da semana
     const quadro = Array.from({ length: 7 }, (_, i) => { const d = addDias(seg, i); return { d, n: nAg(todos.filter((t) => t.data_local === d)) }; });
-    let lista = M.vista === 'hoje' ? hojeIt : semIt;
+    if (M.vista === 'dia' && !M.dia) M.vista = 'hoje';
+    let lista = M.vista === 'hoje' ? hojeIt : M.vista === 'dia' ? no(M.dia, M.dia) : semIt;
     if (M.etapa) lista = lista.filter((t) => t.etapa === M.etapa);
     if (M.res) lista = lista.filter((t) => t.resultado === M.res);
     const q = M.q.trim().toLowerCase(), qd = q.replace(/\D/g, '');
@@ -501,7 +502,11 @@ async function viewMeus() {
         corpo += `<tr class="diahead"><td colspan="${colspan}"><b>${NOMES_DIA[new Date(d + 'T12:00:00Z').getUTCDay()]} ${fmtData(d).slice(0, 5)}</b> · ${nAg(it)} agendamento${nAg(it) === 1 ? '' : 's'} · ${it.length} lançamento${it.length === 1 ? '' : 's'}</td></tr>` + (it.map(linha).join('') || `<tr><td colspan="${colspan}" class="empty small">Sem lançamentos neste dia</td></tr>`);
       }
     } else corpo = lista.map(linha).join('') || `<tr><td colspan="${colspan}" class="empty">Nenhum lançamento hoje${M.etapa || M.res || q ? ' com esses filtros' : ''}</td></tr>`;
-    $('#mlist').innerHTML = `<div class="semana">${quadro.map((x) => `<div class="sd${x.d === h ? ' hoje' : ''}${x.d > h ? ' fut' : ''}"><span>${NOMES_DIA[new Date(x.d + 'T12:00:00Z').getUTCDay()]} ${x.d.slice(8)}</span><b>${x.d > h ? '' : x.n}</b></div>`).join('')}</div>
+    const sel = M.vista === 'dia' ? M.dia : M.vista === 'hoje' ? h : '';
+    const ot = $('#mdia'); if (ot) { ot.textContent = M.dia ? 'Dia ' + fmtData(M.dia).slice(0, 5) : 'Dia escolhido no quadro'; ot.disabled = !M.dia; }
+    $('#mvi').value = M.vista;
+    $('#mlist').innerHTML = `<div class="semana" role="group" aria-label="Agendamentos por dia da semana">${quadro.map((x) => { const fut = x.d > h, nome = NOMES_DIA[new Date(x.d + 'T12:00:00Z').getUTCDay()];
+        return `<button type="button" class="sd${x.d === h ? ' hoje' : ''}${x.d === sel ? ' sel' : ''}${fut ? ' fut' : ''}${!fut && !x.n ? ' zero' : ''}" data-dia="${x.d}"${fut ? ' disabled' : ''}><span class="dn">${nome}</span><b>${fut ? '' : x.n || (x.d === h ? '0' : '–')}</b><span class="dd">${x.d.slice(8)}/${x.d.slice(5, 7)}</span></button>`; }).join('')}</div>
       <table><thead><tr><th>Hora</th>${gest ? '<th>Colaborador</th>' : ''}<th>Cliente</th><th>Telefone</th><th>Loja</th><th>Revisão</th><th>Etapa</th><th>Resultado</th><th>Motivo</th><th></th></tr></thead><tbody>${corpo}</tbody></table>`;
   };
   const carrega = async () => {
@@ -512,6 +517,8 @@ async function viewMeus() {
   liga('mvi', 'vista'); liga('met', 'etapa'); liga('mre', 'res'); liga('mq', 'q', 'input');
   if (gest) $('#mco').addEventListener('change', (e) => { M.colab = e.target.value; carrega(); });
   $('#mlist').addEventListener('click', (e) => {
+    const dbt = e.target.closest('[data-dia]');
+    if (dbt) { M.dia = dbt.dataset.dia; M.vista = M.dia === h ? 'hoje' : 'dia'; desenha(); return; }
     const b = e.target.closest('[data-corrigir]'); if (!b) return;
     const t = dados.itens.find((x) => x.id === Number(b.dataset.corrigir)); if (!t) return;
     const motOpts = (res, sel) => S.cfg.motivos.filter((x) => x.resultado === res).map((x) => `<option value="${x.id}" data-obs="${x.exige_obs}"${x.id === sel ? ' selected' : ''}>${esc(x.descricao)}</option>`).join('');
